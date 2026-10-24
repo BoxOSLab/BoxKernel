@@ -1,6 +1,6 @@
 # Security model
 
-## box-shell is not a sandbox
+## BoxKernel is not a sandbox
 
 This is the single most important thing to understand, and it is
 inherited verbatim from PRoot:
@@ -19,7 +19,7 @@ inherited verbatim from PRoot:
   can invoke `ptrace` themselves (nested tracing is emulated, but the
   emulation is a compat feature, not a containment), use syscalls or
   ABIs the filter doesn't translate, or write through a binding.
-- **Do not run untrusted code under box-shell.** For confinement use
+- **Do not run untrusted code under BoxKernel.** For confinement use
   mount namespaces (bubblewrap, `unshare`), containers, or VMs.
 
 ## What the design *does* protect
@@ -32,7 +32,7 @@ inherited verbatim from PRoot:
 - **Host CLI argument integrity.** QEMU env pairs (`-E`/`-U`) and exec
   argument vectors are rebuilt in tracer-owned memory, never edited
   in place in tracee memory.
-- **No ambient root.** Nothing in box-shell requires or grants
+- **No ambient root.** Nothing in BoxKernel requires or grants
   privilege; there is no setuid helper.
 
 ## The unsafe-code policy (for auditors)

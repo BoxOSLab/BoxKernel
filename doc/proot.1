@@ -1,22 +1,22 @@
-.TH PROOT 1 "" "box-shell 5.1.0" "User Commands"
+.TH PROOT 1 "" "BoxKernel 5.1.0" "User Commands"
 .SH "NAME"
 proot \- chroot, mount \-\-bind, and binfmt_misc without privilege/setup
 .SH "SYNOPSIS"
 \fBproot\fR [\fIoption\fR] ... [\fIcommand\fR]
 .SH "DESCRIPTION"
-box-shell is a user\-space implementation of \fBchroot\fR, \fBmount \-\-bind\fR, and \fBbinfmt_misc\fR.  This means that users don't need any privileges or setup to do things like using an arbitrary directory as the new root file system, making files accessible somewhere else in the filesystem hierarchy, or executing programs built for another CPU architecture transparently through QEMU user\-mode.  Also, developers can use box-shell as a generic Linux process instrumentation engine thanks to its extension mechanism.  Technically box-shell relies on \fBptrace\fR \(em an unprivileged system call available in every Linux kernel \(em combined with \fBseccomp\fR\-based syscall filtering where the kernel supports it.
+BoxKernel is a user\-space implementation of \fBchroot\fR, \fBmount \-\-bind\fR, and \fBbinfmt_misc\fR.  This means that users don't need any privileges or setup to do things like using an arbitrary directory as the new root file system, making files accessible somewhere else in the filesystem hierarchy, or executing programs built for another CPU architecture transparently through QEMU user\-mode.  Also, developers can use BoxKernel as a generic Linux process instrumentation engine thanks to its extension mechanism.  Technically BoxKernel relies on \fBptrace\fR \(em an unprivileged system call available in every Linux kernel \(em combined with \fBseccomp\fR\-based syscall filtering where the kernel supports it.
 .PP
-box-shell is a clean\-room Rust re\-implementation of the Termux fork of PRoot 5.1.0 (\fIhttps://github.com/termux/proot\fR), itself based on proot\-me/PRoot (\fIhttps://github.com/proot-me/PRoot\fR).  It retains the fork features needed to run Linux distributions on Android \(em where there is no root access, SELinux may forbid hard links and binding to low ports, and several system calls are blocked or missing.  The relevant options are \fB\-0\fR/\fB\-i\fR, \fB\-l\fR, \fB\-H\fR, \fB\-p\fR, \fB\-L\fR, \fB\-\-sysvipc\fR, and \fB\-\-kill\-on\-exit\fR; see the Options section.  (The Android\-only \fB\-\-ashmem\-memfd\fR option is not currently implemented.)
+BoxKernel is a clean\-room Rust re\-implementation of the Termux fork of PRoot 5.1.0 (\fIhttps://github.com/termux/proot\fR), itself based on proot\-me/PRoot (\fIhttps://github.com/proot-me/PRoot\fR).  It retains the fork features needed to run Linux distributions on Android \(em where there is no root access, SELinux may forbid hard links and binding to low ports, and several system calls are blocked or missing.  The relevant options are \fB\-0\fR/\fB\-i\fR, \fB\-l\fR, \fB\-H\fR, \fB\-p\fR, \fB\-L\fR, \fB\-\-sysvipc\fR, and \fB\-\-kill\-on\-exit\fR; see the Options section.  (The Android\-only \fB\-\-ashmem\-memfd\fR option is not currently implemented.)
 .PP
-The new root file system, a.k.a \fIguest rootfs\fR, typically contains a Linux distribution.  By default box-shell confines the execution of programs to the guest rootfs only, however users can use the built\-in mount/bind mechanism to access files and directories from the actual root file system, a.k.a \fIhost rootfs\fR, just as if they were part of the guest rootfs.
+The new root file system, a.k.a \fIguest rootfs\fR, typically contains a Linux distribution.  By default BoxKernel confines the execution of programs to the guest rootfs only, however users can use the built\-in mount/bind mechanism to access files and directories from the actual root file system, a.k.a \fIhost rootfs\fR, just as if they were part of the guest rootfs.
 .PP
-When the guest Linux distribution is made for a CPU architecture incompatible with the host one, box-shell uses the CPU emulator QEMU user\-mode to execute guest programs transparently.  It's a convenient way to develop, to build, and to validate any guest Linux packages seamlessly on users' computers, just as if they were in a \fInative\fR guest environment.  That way all of the cross\-compilation issues are avoided.
+When the guest Linux distribution is made for a CPU architecture incompatible with the host one, BoxKernel uses the CPU emulator QEMU user\-mode to execute guest programs transparently.  It's a convenient way to develop, to build, and to validate any guest Linux packages seamlessly on users' computers, just as if they were in a \fInative\fR guest environment.  That way all of the cross\-compilation issues are avoided.
 .PP
-box-shell can also \fImix\fR the execution of host programs and the execution of guest programs emulated by QEMU user\-mode.  This is useful to use host equivalents of programs that are missing from the guest rootfs and to speed up build\-time by using cross\-compilation tools or CPU\-independent programs, like interpreters.
+BoxKernel can also \fImix\fR the execution of host programs and the execution of guest programs emulated by QEMU user\-mode.  This is useful to use host equivalents of programs that are missing from the guest rootfs and to speed up build\-time by using cross\-compilation tools or CPU\-independent programs, like interpreters.
 .PP
-It is worth noting that the guest kernel is never involved, regardless of whether QEMU user\-mode is used or not.  Technically, when guest programs perform access to system resources, box-shell translates their requests before sending them to the host kernel.  This means that guest programs can use host resources (devices, network, ...) just as if they were "normal" host programs.
+It is worth noting that the guest kernel is never involved, regardless of whether QEMU user\-mode is used or not.  Technically, when guest programs perform access to system resources, BoxKernel translates their requests before sending them to the host kernel.  This means that guest programs can use host resources (devices, network, ...) just as if they were "normal" host programs.
 .SH "OPTIONS"
-The command\-line interface is composed of two parts: first box-shell's options (optional), then the command to launch (\fB/bin/sh\fR if not specified).  This section describes the options supported by box-shell, that is, the first part of its command\-line interface.
+The command\-line interface is composed of two parts: first BoxKernel's options (optional), then the command to launch (\fB/bin/sh\fR if not specified).  This section describes the options supported by BoxKernel, that is, the first part of its command\-line interface.
 .SS "Regular options"
 .TP
 \fB\-r\fR \fIpath\fR, \fB\-\-rootfs\fR=\fIpath\fR
@@ -33,7 +33,7 @@ This option makes any file or directory of the host rootfs accessible in the con
 .TP
 \fB\-q\fR \fIcommand\fR, \fB\-\-qemu\fR=\fIcommand\fR
 Execute guest programs through QEMU as specified by \fIcommand\fR.
-Each time a guest program is going to be executed, box-shell inserts the QEMU user\-mode command in front of the initial request. That way, guest programs actually run on a virtual guest CPU emulated by QEMU user\-mode.  The native execution of host programs is still effective and the whole host rootfs is bound to /host\-rootfs in the guest environment.
+Each time a guest program is going to be executed, BoxKernel inserts the QEMU user\-mode command in front of the initial request. That way, guest programs actually run on a virtual guest CPU emulated by QEMU user\-mode.  The native execution of host programs is still effective and the whole host rootfs is bound to /host\-rootfs in the guest environment.
 
 .TP
 \fB\-w\fR \fIpath\fR, \fB\-\-pwd\fR=\fIpath\fR, \fB\-\-cwd\fR=\fIpath\fR
@@ -48,7 +48,7 @@ When the executed command leaves orphaned or detached processes around, proot wa
 .TP
 \fB\-v\fR \fIvalue\fR, \fB\-\-verbose\fR=\fIvalue\fR
 Set the level of debug information to \fIvalue\fR.
-The higher the integer value is, the more detailed debug information is printed to the standard error stream.  A negative value makes box-shell quiet except on fatal errors.
+The higher the integer value is, the more detailed debug information is printed to the standard error stream.  A negative value makes BoxKernel quiet except on fatal errors.
 
 .TP
 \fB\-V\fR, \fB\-\-version\fR, \fB\-\-about\fR
@@ -62,7 +62,7 @@ Print the version and the command\-line usage, then exit.
 .TP
 \fB\-k\fR \fIstring\fR, \fB\-\-kernel\-release\fR=\fIstring\fR
 Make current kernel appear as kernel release \fIstring\fR.
-If a program is run on a kernel older than the one expected by its GNU C library, the following error is reported: "FATAL: kernel too old".  To be able to run such programs, box-shell can emulate some of the features that are available in the kernel release specified by \fIstring\fR but that are missing in the current kernel.
+If a program is run on a kernel older than the one expected by its GNU C library, the following error is reported: "FATAL: kernel too old".  To be able to run such programs, BoxKernel can emulate some of the features that are available in the kernel release specified by \fIstring\fR but that are missing in the current kernel.
 
 .TP
 \fB\-0\fR, \fB\-\-root\-id\fR
@@ -179,10 +179,10 @@ When an error has occurred, the only way to know if it comes from the
 last terminated program or from \fBproot\fR itself is to have a look at the
 error message.
 .SH "FILES"
-box-shell reads links in \fB/proc/<pid>/fd/\fR to support \fBopenat(2)\fR\-like
+BoxKernel reads links in \fB/proc/<pid>/fd/\fR to support \fBopenat(2)\fR\-like
 syscalls made by the guest programs.
 .PP
-When the \fB\-l\fR (\fB\-\-link2symlink\fR) option is used, box-shell stores emulated
+When the \fB\-l\fR (\fB\-\-link2symlink\fR) option is used, BoxKernel stores emulated
 hard links as symbolic links whose names are prefixed with \fB.l2s.\fR or
 \fB.proot.l2s.\fR inside the guest rootfs.  The \fB\-0\fR/\fB\-i\fR options similarly
 record faked file ownership and permissions in \fB.proot\-meta\-file.*\fR
@@ -230,7 +230,7 @@ locations, like some installation scripts:
 .fi
 .SS "\fBchroot\fR + \fBmount \-\-bind\fR + \fBsu\fR equivalent"
 Some programs will not work correctly if they are not run by the "root"
-user, this is typically the case with package managers.  box-shell can fake
+user, this is typically the case with package managers.  BoxKernel can fake
 the root identity and its privileges when the \fB\-0\fR (zero) option is
 specified:
 .PP
@@ -252,7 +252,7 @@ that are known to not be updated by packages:
     Installing package perl...
 .fi
 .SS "\fBchroot\fR + \fBmount \-\-bind\fR + \fBbinfmt_misc\fR equivalent"
-box-shell uses QEMU user\-mode to execute programs built for a CPU
+BoxKernel uses QEMU user\-mode to execute programs built for a CPU
 architecture incompatible with the host one.  To enable this
 feature users just have to specify which instance of QEMU user\-mode
 they want to use with the option \fB\-q\fR:
@@ -295,16 +295,16 @@ the right option mix, or invoke \fBproot\fR directly:
 .fi
 .SH "CAVEATS"
 .IP \[bu] 2
-box-shell is \fInot\fR a security boundary: it confuses programs, it does not
+BoxKernel is \fInot\fR a security boundary: it confuses programs, it does not
 confine them.  A guest program can modify or delete every host file
-the invoking user could modify or delete.  Never use box-shell to isolate
+the invoking user could modify or delete.  Never use BoxKernel to isolate
 untrusted code.
 .IP \[bu] 2
 Tracing each syscall has a performance cost, typically a few percent
 on I/O\-bound workloads and more on syscall\-heavy ones.
 .IP \[bu] 2
 Programs that rely on being setuid, on real \fBchroot(2)\fR, or on kernel
-facilities box-shell cannot emulate will misbehave or fail.
+facilities BoxKernel cannot emulate will misbehave or fail.
 .IP \[bu] 2
 The Android\-only \fB\-\-ashmem\-memfd\fR option of C PRoot is not implemented;
 \fBproot \-\-help\fR always shows the options compiled into the local binary.
@@ -313,7 +313,7 @@ The Android\-only \fB\-\-ashmem\-memfd\fR option of C PRoot is not implemented;
 \fBproot\-distro\fR \(em Termux wrapper that manages guest rootfs archives:
 \fIhttps://github.com/termux/proot-distro\fR
 .IP \[bu] 2
-box-shell sources, book, and issue tracker:
+BoxKernel sources, book, and issue tracker:
 \fIhttps://github.com/BoxOSLab/BoxKernel\fR
 .IP \[bu] 2
 C reference implementation (Termux fork):
@@ -323,5 +323,5 @@ Upstream project (mostly dormant):
 \fIhttps://github.com/proot\-me/PRoot\fR
 .SH "AUTHORS"
 PRoot was written by Cédric Vincent at STMicroelectronics; the Termux
-fork is maintained by the Termux contributors.  box-shell is a clean\-room
+fork is maintained by the Termux contributors.  BoxKernel is a clean\-room
 Rust re\-implementation maintained by BoxOSLab.

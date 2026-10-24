@@ -38,10 +38,7 @@ pub static PROOT_CLI: Cli = Cli {
     synopsis: "proot [option] ... [command]",
     colophon: "Visit https://github.com/termux/proot for help, bug reports, suggestions, patches, ...\n\
 Copyright (C) 2015 STMicroelectronics, licensed under GPL v2 or later.",
-    logo: " _____ _____              ___\n\
-|  __ \\  __ \\_____  _____|   |_\n\
-|   __/     /  _  \\/  _  \\    _|\n\
-|__|  |__|__\\_____/\\_____/\\____|",
+    logo: "BoxKernel",
     options: PROOT_OPTIONS,
 };
 

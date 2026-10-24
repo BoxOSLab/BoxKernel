@@ -1,5 +1,5 @@
 [package]
-name = "box-shell"
+name = "boxkernel"
 version = "5.1.0"
 edition = "2024"
 rust-version = "1.85"
@@ -12,7 +12,7 @@ name = "proot"
 path = "src/main.rs"
 
 [lib]
-name = "boxshell"
+name = "boxkernel"
 path = "src/lib.rs"
 
 [dependencies]

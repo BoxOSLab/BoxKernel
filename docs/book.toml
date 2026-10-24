@@ -1,5 +1,5 @@
 [book]
-title = "box-shell"
+title = "BoxKernel"
 description = "User-space chroot, bind mounts and binfmt_misc — a clean-room Rust rewrite of PRoot"
 authors = ["BoxOSLab"]
 language = "en"

@@ -1,6 +1,6 @@
-# Contributing to box-shell
+# Contributing to BoxKernel
 
-Thanks for your interest in contributing! box-shell is a clean-room
+Thanks for your interest in contributing! BoxKernel is a clean-room
 Rust re-implementation of [Termux PRoot 5.1.0](https://github.com/termux/proot)
 whose overriding constraint is **behavioral parity with the C
 reference**. Every contribution is judged against that constraint first,
@@ -46,7 +46,7 @@ To run it against the Rust binary:
 
 ```console
 $ cd ../proot/tests               # the C reference checkout
-$ make -C . test PROOT=/path/to/box-shell/target/release/proot
+$ make -C . test PROOT=/path/to/BoxKernel/target/release/proot
 ```
 
 Expected result: **113 ok, 0 failed**, 8 skipped, 9 xfail (environment

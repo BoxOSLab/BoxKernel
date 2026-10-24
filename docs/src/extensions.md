@@ -1,6 +1,6 @@
 # Extension framework
 
-Extensions are box-shell's mechanism for *policy on top of
+Extensions are BoxKernel's mechanism for *policy on top of
 translation*. Everything the C code did with
 `(callback, config, filtered_sysnums)` triples becomes a typed
 `Event` + `AnyExtension` dispatch in `src/extension/mod.rs`.

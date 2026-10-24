@@ -7,7 +7,7 @@ body:
     id: summary
     attributes:
       label: Summary
-      description: What should box-shell do? If it exists in C PRoot, name the C option/file.
+      description: What should BoxKernel do? If it exists in C PRoot, name the C option/file.
     validations:
       required: true
 

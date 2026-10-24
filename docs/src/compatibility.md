@@ -1,6 +1,6 @@
 # Compatibility with C PRoot
 
-box-shell targets **behavioral parity with Termux PRoot 5.1.0** — not
+BoxKernel targets **behavioral parity with Termux PRoot 5.1.0** — not
 just feature parity, but identical observable behavior: same option
 parsing, same errno paths, same exit statuses, same verbose output
 shape.
@@ -17,7 +17,7 @@ shape.
 - QEMU `-q` contract: runner resolved on the **host**, `-E`/`-U` env
   pairs emitted in C's order, `/host-rootfs` binding
 - `.proot-meta-file.*`/`.l2s.*` helper-file formats — a rootfs written
-  by C proot reads correctly under box-shell and vice versa
+  by C proot reads correctly under BoxKernel and vice versa
 - `ptrace`/`wait` emulation for guest debuggers
 
 ## Known differences
@@ -29,7 +29,7 @@ shape.
 | Global state | C `static` vars → atomics/`thread_local!` | deliberate — same semantics |
 | Memory allocation | talloc hierarchy → owned values/`Rc`/`Box` | deliberate — C ownership graph preserved |
 | Build system | GNU make + libtalloc | Cargo; `build.rs` runs `rustc` for `loader/` |
-| Version string | `proot 5.1.0` | `box-shell 5.1.0` (binary still named `proot`) |
+| Version string | `proot 5.1.0` | `BoxKernel 5.1.0` (binary still named `proot`) |
 
 ## Things the Rust port does *better* (and why)
 

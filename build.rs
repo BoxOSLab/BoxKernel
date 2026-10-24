@@ -1,4 +1,4 @@
-//! Build script for box-shell.
+//! Build script for BoxKernel.
 //!
 //! 1. Generates the neutral `Sysnum` enum from `data/sysnums.list`.
 //! 2. Generates per-ABI syscall-number tables from `data/sysnums-<arch>.txt`

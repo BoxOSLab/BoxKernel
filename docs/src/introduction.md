@@ -1,6 +1,6 @@
 # Introduction
 
-**box-shell** is a clean-room Rust re-implementation of
+**BoxKernel** is a clean-room Rust re-implementation of
 [Termux PRoot 5.1.0](https://github.com/termux/proot) — a user-space
 implementation of `chroot`, `mount --bind`, and `binfmt_misc`.
 
@@ -16,9 +16,9 @@ Users need no privileges or setup to:
 
 ## How it works, in one paragraph
 
-box-shell launches a child process under `ptrace(2)`. Every system call
+BoxKernel launches a child process under `ptrace(2)`. Every system call
 the child attempts is intercepted at syscall-enter and syscall-exit.
-box-shell reads the syscall arguments out of tracee memory
+BoxKernel reads the syscall arguments out of tracee memory
 (`process_vm_readv`, falling back to `PTRACE_PEEKDATA`), rewrites path
 arguments according to the configured rootfs and bindings, writes them
 back, and lets the syscall proceed — or emulates the syscall entirely
@@ -30,7 +30,7 @@ user space on the host.
 
 ## Relationship to C PRoot
 
-| | C PRoot 5.1.0 (reference) | box-shell |
+| | C PRoot 5.1.0 (reference) | BoxKernel |
 |---|---|---|
 | Language | C99 + talloc + GNU make | Rust 2024, `libc`-only, Cargo |
 | `unsafe` | the whole language | one audited module (`src/sys.rs`) + tiny documented islands |

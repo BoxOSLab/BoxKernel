@@ -8,4 +8,4 @@ contact_links:
     about: Report vulnerabilities privately — do NOT open a public issue
   - name: C reference implementation
     url: https://github.com/termux/proot
-    about: The behavioral specification box-shell ports from
+    about: The behavioral specification BoxKernel ports from

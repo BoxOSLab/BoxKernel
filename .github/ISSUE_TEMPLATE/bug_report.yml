@@ -52,6 +52,6 @@ body:
       description: Output of `uname -a`, `proot --version`, and distro.
       placeholder: |
         Linux host 6.8.0 x86_64
-        box-shell 5.1.0 (commit …)
+        BoxKernel 5.1.0 (commit …)
     validations:
       required: true

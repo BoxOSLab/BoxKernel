@@ -2,7 +2,7 @@
 
 ## From source (the only supported method today)
 
-box-shell is a single-crate Rust workspace with one dependency
+BoxKernel is a single-crate Rust workspace with one dependency
 (`libc`). There is nothing to configure and no system libraries to
 install beyond Rust itself.
 
@@ -11,12 +11,12 @@ $ git clone https://github.com/BoxOSLab/BoxKernel.git
 $ cd BoxKernel
 $ cargo build --release
 $ ./target/release/proot --version
-box-shell 5.1.0
+BoxKernel 5.1.0
 ```
 
 Requirements:
 
-- **Linux.** box-shell instruments `ptrace(2)`, `seccomp`,
+- **Linux.** BoxKernel instruments `ptrace(2)`, `seccomp`,
   `process_vm_readv/writev`, and `/proc/<pid>/fd`. It does not run on
   macOS or Windows; Android works the same way it does for the C
   implementation (through Termux).

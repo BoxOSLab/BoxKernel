@@ -1,8 +1,8 @@
 # Security Policy
 
-## Scope: box-shell is *not* a security boundary
+## Scope: BoxKernel is *not* a security boundary
 
-Like PRoot, box-shell works by *confusing* traced programs — it rewrites
+Like PRoot, BoxKernel works by *confusing* traced programs — it rewrites
 their syscall arguments so they see a different filesystem view. It does
 **not** confine them:
 
@@ -13,12 +13,12 @@ their syscall arguments so they see a different filesystem view. It does
   `ptrace` of its own children, raw syscalls through mechanisms we do
   not filter, or simply asking for a path we have bound through).
 
-**Never use box-shell to isolate untrusted code.** For actual
+**Never use BoxKernel to isolate untrusted code.** For actual
 confinement use namespaces/containers (bubblewrap, runc) or a VM.
 
 ## What *is* in scope
 
-- Memory-safety defects in box-shell itself (the Rust code, the FFI
+- Memory-safety defects in BoxKernel itself (the Rust code, the FFI
   boundary in `src/sys.rs`, the `loader/` stub)
 - Incorrect syscall rewriting that corrupts or unexpectedly reveals
   host data *beyond* what the invoking user could already do
@@ -39,7 +39,7 @@ or email the maintainers at the address in `git shortlog -se` output.
 
 Please include:
 
-- The box-shell version/commit and host environment (kernel, arch)
+- The BoxKernel version/commit and host environment (kernel, arch)
 - A minimal reproducer
 - `proot -v 9 …` output if the bug is in translation/emulation logic
 

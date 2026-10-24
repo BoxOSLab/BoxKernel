@@ -97,10 +97,10 @@ mod tests {
     fn tool_name_defaults_and_sets() {
         // OnceLock: first set wins; subsequent calls are ignored.
         assert_eq!(tool_name(), "proot");
-        set_tool_name("box-shell-test");
+        set_tool_name("boxkernel-test");
         // Depending on test order another test may have set it already.
         let n = tool_name();
-        assert!(n == "proot" || n == "box-shell-test");
+        assert!(n == "proot" || n == "boxkernel-test");
     }
 
     #[test]

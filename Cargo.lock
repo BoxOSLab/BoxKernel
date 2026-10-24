@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "box-shell"
+name = "boxkernel"
 version = "5.1.0"
 dependencies = [
  "libc",

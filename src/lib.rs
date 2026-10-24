@@ -1,4 +1,4 @@
-//! box-shell — a clean-room Rust re-implementation of PRoot:
+//! BoxKernel — a clean-room Rust re-implementation of PRoot:
 //! user-space chroot, `mount --bind` and `binfmt_misc` built on ptrace(2).
 //!
 //! # Architecture overview

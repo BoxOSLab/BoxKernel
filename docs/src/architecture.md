@@ -1,6 +1,6 @@
 # Architecture
 
-box-shell is ~22,000 lines of Rust in one crate (`boxshell`) producing
+BoxKernel is ~22,000 lines of Rust in one crate (`boxkernel`) producing
 a `proot` binary, plus a freestanding `loader/` sub-crate injected into
 tracees. This chapter is the map: where each concern lives and how a
 syscall flows through the system.

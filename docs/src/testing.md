@@ -8,7 +8,7 @@
 | Smoke | Binary boots, binds, fakes root | CI `smoke test` step | `proot -0 id -u`, `proot -b …` |
 | **Reference suite** | The C implementation's full integration suite run against the Rust binary | `proot/tests/` in the C checkout | `make -C tests` |
 
-The third layer is the real contract — box-shell exists to be a
+The third layer is the real contract — BoxKernel exists to be a
 drop-in replacement, so the C suite *is* the specification.
 
 ## Running the reference suite
@@ -19,7 +19,7 @@ You need a checkout of the C reference next to this repo:
 $ git clone https://github.com/termux/proot.git ../proot
 $ cargo build --release
 $ cd ../proot/tests
-$ make test PROOT=/abs/path/to/box-shell/target/release/proot
+$ make test PROOT=/abs/path/to/BoxKernel/target/release/proot
 ```
 
 Expected result (x86-64 host):

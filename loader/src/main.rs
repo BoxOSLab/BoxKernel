@@ -1,4 +1,4 @@
-//! box-shell loader: a freestanding, position-dependent static ELF that the
+//! BoxKernel loader: a freestanding, position-dependent static ELF that the
 //! kernel execve()s in place of the real guest program.  PRoot then pokes a
 //! "load script" onto the tracee stack (see execve/exit) and hands its address
 //! to `_start` through the first argument register.

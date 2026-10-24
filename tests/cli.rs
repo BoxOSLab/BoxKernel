@@ -8,7 +8,7 @@ fn version_prints_banner_and_succeeds() {
     let out = run(&["--version"], &[]);
     assert_eq!(out.status.code(), Some(0));
     let s = stdout(&out);
-    assert!(s.contains("proot"), "version output: {s}");
+    assert!(s.contains("BoxKernel"), "version output: {s}");
     assert!(s.contains("5.1.0"), "version output: {s}");
     assert!(s.contains("process_vm = yes"), "version output: {s}");
 }

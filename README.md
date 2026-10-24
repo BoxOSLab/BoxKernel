@@ -1,15 +1,15 @@
-# box-shell
+# BoxKernel
 
-[![CI](https://github.com/BoxOSLab/BoxKernel/actions/workflows/ci.yml/badge.svg)](https://github.com/BoxOSLab/BoxKernel/actions/workflows/ci.yml)
-[![Docs](https://github.com/BoxOSLab/BoxKernel/actions/workflows/docs.yml/badge.svg)](https://github.com/BoxOSLab/BoxKernel/actions/workflows/docs.yml)
-[![License: GPL-2.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](LICENSE)
-[![MSRV](https://img.shields.io/badge/MSRV-1.85-orange.svg)](rust-toolchain.toml)
+[![CI](https://img.shields.io/github/actions/workflow/status/BoxOSLab/BoxKernel/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/BoxOSLab/BoxKernel/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/github/actions/workflow/status/BoxOSLab/BoxKernel/docs.yml?branch=main&style=for-the-badge&label=Docs)](https://github.com/BoxOSLab/BoxKernel/actions/workflows/docs.yml)
+[![License: GPL-2.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue?style=for-the-badge)](LICENSE)
+[![MSRV](https://img.shields.io/badge/MSRV-1.85-orange?style=for-the-badge)](rust-toolchain.toml)
 
 A clean-room **Rust rewrite of [PRoot](https://github.com/termux/proot) 5.1.0**:
 a user-space implementation of `chroot`, `mount --bind`, and
 `binfmt_misc` — no privileges or setup required.
 
-box-shell traces child processes with `ptrace(2)` (plus `seccomp`
+BoxKernel traces child processes with `ptrace(2)` (plus `seccomp`
 filtering where the kernel supports it) and rewrites their system calls.
 Use it to run programs against an arbitrary guest root filesystem,
 relocate files into a different place in the hierarchy, execute binaries
@@ -63,7 +63,7 @@ suite — 113 checks green) while gaining Rust's guarantees:
 ```console
 $ cargo build --release          # produces target/release/proot
 $ ./target/release/proot --version
-box-shell 5.1.0
+BoxKernel 5.1.0
 
 # Run a command inside a guest rootfs
 $ ./target/release/proot -r ~/alpine-rootfs /bin/sh
@@ -90,7 +90,7 @@ existing scripts (e.g. `proot-distro`).
 | [Architecture](docs/src/architecture.md) | How the ptrace engine, translation pipeline, and modules fit together |
 | [Extensions](docs/src/extensions.md) | What each built-in extension does and how to write one |
 | [Mixed mode & QEMU](docs/src/mixed-mode.md) | Foreign-architecture and host/guest mixed execution |
-| [Security model](docs/src/security.md) | What box-shell does *not* protect you from |
+| [Security model](docs/src/security.md) | What BoxKernel does *not* protect you from |
 | [Development](docs/src/development.md) | Toolchain, lint/test commands, unsafe policy, parity rules |
 | [Testing](docs/src/testing.md) | Unit tests and the C-reference integration suite |
 | `man proot` ([doc/proot.1](doc/proot.1)) | The manual page |
@@ -132,5 +132,5 @@ GPL-2.0-or-later, matching the upstream PRoot license. See
 [LICENSE](LICENSE).
 
 PRoot was written by Cédric Vincent at STMicroelectronics and is
-maintained by the Termux contributors. box-shell is a clean-room Rust
+maintained by the Termux contributors. BoxKernel is a clean-room Rust
 re-implementation maintained by BoxOSLab.
