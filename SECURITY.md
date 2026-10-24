@@ -33,7 +33,7 @@ confinement use namespaces/containers (bubblewrap, runc) or a VM.
 
 Use GitHub's private reporting:
 
-- <https://github.com/boxshell-org/box-shell/security/advisories/new>
+- <https://github.com/BoxOSLab/BoxKernel/security/advisories/new>
 
 or email the maintainers at the address in `git shortlog -se` output.
 

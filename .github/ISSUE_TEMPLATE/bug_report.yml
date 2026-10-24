@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Thanks for reporting! For **security** issues please use
-        [private reporting](https://github.com/boxshell-org/box-shell/security/advisories/new)
+        [private reporting](https://github.com/BoxOSLab/BoxKernel/security/advisories/new)
         instead — do not post them here.
 
   - type: textarea

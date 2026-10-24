@@ -16,8 +16,8 @@ Requirements:
 - No other dependencies; `libc` is the only crate dependency
 
 ```console
-$ git clone https://github.com/boxshell-org/box-shell.git
-$ cd box-shell
+$ git clone https://github.com/BoxOSLab/BoxKernel.git
+$ cd BoxKernel
 $ cargo build            # debug build: target/debug/proot
 $ cargo build --release  # release build
 $ cargo test             # unit tests

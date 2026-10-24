@@ -7,8 +7,8 @@ box-shell is a single-crate Rust workspace with one dependency
 install beyond Rust itself.
 
 ```console
-$ git clone https://github.com/boxshell-org/box-shell.git
-$ cd box-shell
+$ git clone https://github.com/BoxOSLab/BoxKernel.git
+$ cd BoxKernel
 $ cargo build --release
 $ ./target/release/proot --version
 box-shell 5.1.0

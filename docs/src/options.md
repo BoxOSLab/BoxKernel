@@ -3,7 +3,7 @@
 The command line is two parts: `proot` options, then the command to
 launch (`/bin/sh` when none is given). This page documents the options
 compiled into the Rust binary — it mirrors `proot --help` and
-`man proot` ([`doc/proot.1`](https://github.com/boxshell-org/box-shell/blob/main/doc/proot.1)).
+`man proot` ([`doc/proot.1`](https://github.com/BoxOSLab/BoxKernel/blob/main/doc/proot.1)).
 
 ## Filesystem view
 

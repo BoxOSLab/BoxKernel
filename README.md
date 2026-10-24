@@ -1,7 +1,7 @@
 # box-shell
 
-[![CI](https://github.com/boxshell-org/box-shell/actions/workflows/ci.yml/badge.svg)](https://github.com/boxshell-org/box-shell/actions/workflows/ci.yml)
-[![Docs](https://github.com/boxshell-org/box-shell/actions/workflows/docs.yml/badge.svg)](https://github.com/boxshell-org/box-shell/actions/workflows/docs.yml)
+[![CI](https://github.com/BoxOSLab/BoxKernel/actions/workflows/ci.yml/badge.svg)](https://github.com/BoxOSLab/BoxKernel/actions/workflows/ci.yml)
+[![Docs](https://github.com/BoxOSLab/BoxKernel/actions/workflows/docs.yml/badge.svg)](https://github.com/BoxOSLab/BoxKernel/actions/workflows/docs.yml)
 [![License: GPL-2.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](LICENSE)
 [![MSRV](https://img.shields.io/badge/MSRV-1.85-orange.svg)](rust-toolchain.toml)
 
@@ -133,4 +133,4 @@ GPL-2.0-or-later, matching the upstream PRoot license. See
 
 PRoot was written by Cédric Vincent at STMicroelectronics and is
 maintained by the Termux contributors. box-shell is a clean-room Rust
-re-implementation maintained by the boxshell organization.
+re-implementation maintained by BoxOSLab.

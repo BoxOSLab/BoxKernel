@@ -80,5 +80,5 @@ re-implements ([Termux PRoot 5.1.0](https://github.com/termux/proot)).
 - `cargo fmt --check`, `cargo clippy --all-targets -D warnings`,
   `cargo test`, `cargo deny check`, debug + release builds all clean.
 
-[Unreleased]: https://github.com/boxshell-org/box-shell/compare/v5.1.0...HEAD
-[5.1.0]: https://github.com/boxshell-org/box-shell/releases/tag/v5.1.0
+[Unreleased]: https://github.com/BoxOSLab/BoxKernel/compare/v5.1.0...HEAD
+[5.1.0]: https://github.com/BoxOSLab/BoxKernel/releases/tag/v5.1.0

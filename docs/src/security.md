@@ -65,6 +65,6 @@ committed.
 
 ## Reporting
 
-See [SECURITY.md](https://github.com/boxshell-org/box-shell/blob/main/SECURITY.md)
+See [SECURITY.md](https://github.com/BoxOSLab/BoxKernel/blob/main/SECURITY.md)
 — private GitHub advisories preferred, no public issues for
 vulnerabilities.

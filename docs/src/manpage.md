@@ -1,7 +1,7 @@
 # Manual page
 
 The `proot(1)` manual page is maintained at
-[`doc/proot.1`](https://github.com/boxshell-org/box-shell/blob/main/doc/proot.1)
+[`doc/proot.1`](https://github.com/BoxOSLab/BoxKernel/blob/main/doc/proot.1)
 in roff format.
 
 View it:
