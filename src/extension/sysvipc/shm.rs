@@ -163,10 +163,7 @@ fn recvmsg_pointers(
     do_write: bool,
 ) -> Result<RecvmsgPointers, i32> {
     let sockaddr_un_len = size_of::<libc::sockaddr_un>() as Word;
-    #[cfg(target_arch = "x86_64")]
     let is32 = is_32on64_mode(tracee);
-    #[cfg(not(target_arch = "x86_64"))]
-    let is32 = true;
 
     let ptr_len: Word = if is32 { 4 } else { 8 };
     let buf_end = guest_buf + sockaddr_un_len;
@@ -824,7 +821,7 @@ pub fn shm_helper_main() -> ! {
         let mut addr: libc::sockaddr_un = crate::sys::zeroed();
         addr.sun_family = libc::AF_UNIX as u16;
         for (dst, src) in addr.sun_path[..p.len()].iter_mut().zip(p.bytes()) {
-            *dst = src as i8;
+            *dst = src as libc::c_char;
         }
         let bound = crate::sys::bind(socket_server_fd, &addr);
         if bound == 0 {

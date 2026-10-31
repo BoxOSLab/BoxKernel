@@ -16,6 +16,7 @@ const SHADOW_MAX_AGE_MS: i64 = 1000;
 const SHADOW_TIMER_MS: i64 = 50;
 const SHADOW_REAP_INTERVAL_MS: i64 = SHADOW_TIMER_MS / 2;
 const F_GETPIPE_SZ: i32 = 1032;
+const ITIMER_REAL: i32 = 0; // Not exported by libc for Bionic.
 
 #[derive(Copy, Clone)]
 struct Shadow {
@@ -59,7 +60,7 @@ fn writer_would_block(fd: i32) -> bool {
         return false;
     }
     let mut buffered: libc::c_int = 0;
-    if crate::sys::ioctl_val(fd, libc::FIONREAD, &mut buffered) < 0 {
+    if crate::sys::ioctl_val(fd, libc::FIONREAD as libc::c_ulong, &mut buffered) < 0 {
         return false;
     }
     buffered as i64
@@ -169,7 +170,7 @@ pub fn set_timer(enabled: bool) {
     if enabled {
         timer.it_value.tv_usec = SHADOW_TIMER_MS * 1000;
     }
-    if crate::sys::setitimer(libc::ITIMER_REAL, &timer) < 0 {
+    if crate::sys::setitimer(ITIMER_REAL, &timer) < 0 {
         return;
     }
     TIMER_ARMED.with(|a| a.set(enabled));

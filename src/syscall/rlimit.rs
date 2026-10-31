@@ -47,7 +47,7 @@ pub fn translate_setrlimit_exit(tracee: &Tracee, is_prlimit: bool) -> i32 {
         rlim_cur: 0,
         rlim_max: 0,
     };
-    if crate::sys::prlimit64(0, libc::RLIMIT_STACK, None, Some(&mut proot_stack)) < 0 {
+    if crate::sys::prlimit64(0, libc::RLIMIT_STACK as _, None, Some(&mut proot_stack)) < 0 {
         crate::verbose!(Some(tracee), 1, "can't get stack limit.");
         return 0; // Not fatal.
     }
@@ -57,7 +57,7 @@ pub fn translate_setrlimit_exit(tracee: &Tracee, is_prlimit: bool) -> i32 {
     }
     proot_stack.rlim_cur = tracee_stack_limit;
 
-    if crate::sys::prlimit64(0, libc::RLIMIT_STACK, Some(&proot_stack), None) < 0 {
+    if crate::sys::prlimit64(0, libc::RLIMIT_STACK as _, Some(&proot_stack), None) < 0 {
         crate::verbose!(Some(tracee), 1, "can't set stack limit.");
         return 0; // Not fatal.
     }
@@ -139,7 +139,7 @@ mod tests {
             rlim_max: 0,
         };
         assert_eq!(
-            crate::sys::prlimit64(0, libc::RLIMIT_STACK, None, Some(&mut rl)),
+            crate::sys::prlimit64(0, libc::RLIMIT_STACK as _, None, Some(&mut rl)),
             0
         );
         rl.rlim_cur

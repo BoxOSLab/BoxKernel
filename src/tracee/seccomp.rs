@@ -53,6 +53,7 @@ pub fn set_result_after_seccomp(tracee: &mut Tracee, result: Word) {
 }
 
 /// x86_64: `rax <- orig_rax` (resp. `eax <- orig_eax`); other archs no-op.
+#[cfg(target_arch = "x86_64")]
 fn copy_orig_to_effective(tracee: &mut Tracee) {
     // REG_OFFSET_X86_64: orig_rax (idx into Regs: 15), rax = SysargResult.
     // Use the Reg abstraction: SYSARG_RESULT == rax slot; ORIG_RAX has no
@@ -62,10 +63,19 @@ fn copy_orig_to_effective(tracee: &mut Tracee) {
 }
 
 /// x86_64: `orig_rax <- rax` after a rejected syscall (kernel set it to -1).
+#[cfg(target_arch = "x86_64")]
 fn copy_effective_to_orig(tracee: &mut Tracee) {
     let regs = &mut tracee.regs[RegVersion::Current.idx()];
     regs.orig_rax = regs.rax;
 }
+
+/// aarch64: the syscall number lives in x8 (r7 for AArch32), which the
+/// kernel leaves untouched when it rolls a trapped syscall back.
+#[cfg(not(target_arch = "x86_64"))]
+fn copy_orig_to_effective(_tracee: &mut Tracee) {}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn copy_effective_to_orig(_tracee: &mut Tracee) {}
 
 /// `handle_seccomp_event()` — SIGSYS raised by a system seccomp policy.
 /// Returns 0 to swallow the signal, SIGSYS to deliver it.
@@ -642,8 +652,9 @@ fn statfs_via_sigsys(tracee: &mut Tracee) {
         st.f_blocks,
         st.f_bfree,
         st.f_bavail,
-        st.f_bsize as u64,
-        st.f_frsize as u64,
+        // Field types vary between libc flavours (glibc vs Bionic).
+        st.f_bsize as _,
+        st.f_frsize as _,
         st.f_files,
         st.f_ffree,
     ];
@@ -657,8 +668,8 @@ fn statfs_via_sigsys(tracee: &mut Tracee) {
     let put = |off: usize, v: i64, out: &mut [u8]| {
         out[off..off + 4].copy_from_slice(&(v as i32).to_ne_bytes());
     };
-    put(0, f_type, &mut out);
-    put(4, st.f_bsize, &mut out);
+    put(0, f_type as _, &mut out);
+    put(4, st.f_bsize as _, &mut out);
     put(8, st.f_blocks as i64, &mut out);
     put(12, st.f_bfree as i64, &mut out);
     put(16, st.f_bavail as i64, &mut out);
@@ -669,9 +680,9 @@ fn statfs_via_sigsys(tracee: &mut Tracee) {
     let stb = crate::sys::as_bytes(&st);
     let fsid_off = std::mem::offset_of!(libc::statfs64, f_fsid);
     out[28..36].copy_from_slice(&stb[fsid_off..fsid_off + 8]);
-    put(36, st.f_namelen, &mut out);
-    put(40, st.f_frsize, &mut out);
-    put(44, st.f_flags, &mut out);
+    put(36, st.f_namelen as _, &mut out);
+    put(40, st.f_frsize as _, &mut out);
+    put(44, st.f_flags as _, &mut out);
 
     let _ = write_data(
         tracee,
@@ -717,6 +728,7 @@ mod tests {
     use crate::tracee::reg::{Reg, RegVersion, peek_reg, poke_reg};
 
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn orig_effective_copy() {
         let mut t = Tracee::default();
         t.regs[RegVersion::Current.idx()].orig_rax = 0x1234;
@@ -735,17 +747,21 @@ mod tests {
             ..Default::default()
         };
         poke_reg(&mut t, Reg::InstrPointer, 0x1000);
-        t.regs[RegVersion::Current.idx()].orig_rax = 42;
+        crate::tracee::reg::set_bank_reg(&mut t, RegVersion::Current, Reg::SysargNum, 42);
         restart_syscall_after_seccomp(&mut t);
-        // IP rewound by SYSTRAP_SIZE (syscall insn = 2 on x86_64).
+        // IP rewound by SYSTRAP_SIZE (syscall insn = 2 on x86_64, 4 on arm64).
         assert_eq!(
             peek_reg(&t, RegVersion::Current, Reg::InstrPointer),
             0x1000 - crate::arch::SYSTRAP_SIZE
         );
         assert!(t.restore_original_regs_after_seccomp_event);
         assert_eq!(t.restart_how, crate::ptrace::ptc::PTRACE_SYSCALL);
-        // rax copied from orig_rax.
-        assert_eq!(t.regs[RegVersion::Current.idx()].rax, 42);
+        // The re-executed trap reads the number back (x86_64: rax copied
+        // from orig_rax; aarch64: x8 untouched).
+        assert_eq!(
+            peek_reg(&t, RegVersion::Current, crate::tracee::reg::SYSTRAP_NUM),
+            42
+        );
     }
 
     #[test]

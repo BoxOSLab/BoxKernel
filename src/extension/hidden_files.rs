@@ -220,7 +220,7 @@ mod tests {
         };
         // Non-getdents syscall -> no-op.
         arm_getdents(&mut t, arena.addr() + 0x800, 10, fd, 10);
-        set_sysnum(&mut t, Sysnum::open);
+        set_sysnum(&mut t, Sysnum::getpid);
         save_current_regs(&mut t, RegVersion::Original);
         assert_eq!(handle_getdents(&mut t), 0);
         assert_eq!(peek_reg(&t, RegVersion::Current, Reg::SysargResult), 10);

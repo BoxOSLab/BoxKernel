@@ -23,6 +23,7 @@ struct Sysnums {
     offset: Word,
 }
 
+#[cfg(target_arch = "x86_64")]
 fn get_sysnums(abi: Abi) -> Sysnums {
     match abi {
         Abi::Default => Sysnums {
@@ -36,6 +37,21 @@ fn get_sysnums(abi: Abi) -> Sysnums {
         Abi::Abi3 => Sysnums {
             table: &SYSNUMS_X32,
             offset: 0x4000_0000,
+        },
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn get_sysnums(abi: Abi) -> Sysnums {
+    match abi {
+        Abi::Default => Sysnums {
+            table: &SYSNUMS_ARM64,
+            offset: 0,
+        },
+        // AArch32 (ARM EABI) compat tasks; there is no third ABI on arm64.
+        Abi::Abi2 | Abi::Abi3 => Sysnums {
+            table: &SYSNUMS_ARM,
+            offset: 0,
         },
     }
 }
@@ -69,7 +85,23 @@ pub fn detranslate_sysnum(abi: Abi, sysnum: Sysnum) -> Word {
         .unwrap_or(SYSCALL_AVOIDER)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "aarch64"))]
+mod tests_aarch64 {
+    use super::*;
+
+    #[test]
+    fn arm64_known_numbers() {
+        assert_eq!(translate_sysnum(Abi::Default, 56), Sysnum::openat);
+        assert_eq!(translate_sysnum(Abi::Default, 63), Sysnum::read);
+        assert_eq!(translate_sysnum(Abi::Default, 221), Sysnum::execve);
+        assert_eq!(
+            detranslate_sysnum(Abi::Default, Sysnum::open),
+            SYSCALL_AVOIDER
+        );
+    }
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
 mod tests {
     use super::*;
 

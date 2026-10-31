@@ -638,8 +638,14 @@ mod tests {
         assert!(!is_in_sysexit(&t));
         t.status = 1;
         assert!(is_in_sysexit(&t));
-        t.regs[crate::tracee::reg::RegVersion::Original.idx()].orig_rax =
+        let getpid =
             crate::sysnum::detranslate_sysnum(crate::tracee::reg::get_abi(&t), Sysnum::getpid);
+        crate::tracee::reg::set_bank_reg(
+            &mut t,
+            crate::tracee::reg::RegVersion::Original,
+            crate::tracee::reg::Reg::SysargNum,
+            getpid,
+        );
         assert!(is_in_sysexit2(&t, Sysnum::getpid));
         assert!(!is_in_sysexit2(&t, Sysnum::openat));
     }

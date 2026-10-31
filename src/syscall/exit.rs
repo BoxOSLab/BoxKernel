@@ -120,9 +120,13 @@ pub fn translate_syscall_exit(tracee: &mut Tracee) {
         Sysnum::readlink | Sysnum::readlinkat => readlink_exit(tracee, syscall_result),
 
         Sysnum::uname => {
-            // 32-bit-on-64 tracees see "i686" — some 32-bit tools are
-            // confused by "x86_64".
-            if crate::tracee::reg::get_abi(tracee) != Abi::Abi2 || (syscall_result as i64) < 0 {
+            // 32-bit-on-64 x86 tracees see "i686" — some 32-bit tools are
+            // confused by "x86_64".  (arm64 kernels already report a
+            // 32-bit machine to AArch32 tasks.)
+            if !cfg!(target_arch = "x86_64")
+                || crate::tracee::reg::get_abi(tracee) != Abi::Abi2
+                || (syscall_result as i64) < 0
+            {
                 Flow::End
             } else {
                 let address = peek_reg(tracee, RegVersion::Original, Reg::Sysarg1);
@@ -747,17 +751,27 @@ mod tests {
     }
 
     fn set_readlink_regs(t: &mut Tracee, input: Word, output: Word, max: Word) {
+        // readlink(path, buf, size) where it exists, else (arm64)
+        // readlinkat(AT_FDCWD, path, buf, size).
+        let readlink = detranslate_sysnum(get_abi(t), Sysnum::readlink);
+        let (sysnum, path, buf, size) = if readlink != crate::arch::SYSCALL_AVOIDER {
+            (readlink, Reg::Sysarg1, Reg::Sysarg2, Reg::Sysarg3)
+        } else {
+            poke_reg(t, Reg::Sysarg1, libc::AT_FDCWD as Word);
+            (
+                detranslate_sysnum(get_abi(t), Sysnum::readlinkat),
+                Reg::Sysarg2,
+                Reg::Sysarg3,
+                Reg::Sysarg4,
+            )
+        };
         // Original bank: the syscall + args as the guest issued them.
-        poke_reg(
-            t,
-            Reg::SysargNum,
-            detranslate_sysnum(get_abi(t), Sysnum::readlink),
-        );
-        poke_reg(t, Reg::Sysarg2, output);
-        poke_reg(t, Reg::Sysarg3, max);
+        poke_reg(t, Reg::SysargNum, sysnum);
+        poke_reg(t, buf, output);
+        poke_reg(t, size, max);
         t.regs[RegVersion::Original.idx()] = t.regs[RegVersion::Current.idx()];
-        // Modified bank: arg1 holds the *translated* host path address.
-        poke_reg(t, Reg::Sysarg1, input);
+        // Modified bank: the path argument holds the *translated* host path.
+        poke_reg(t, path, input);
         t.regs[RegVersion::Modified.idx()] = t.regs[RegVersion::Current.idx()];
     }
 

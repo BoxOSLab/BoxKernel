@@ -13,17 +13,22 @@ use std::os::unix::io::RawFd;
 // errno
 // ==================================================================
 
+#[cfg(target_os = "android")]
+use libc::__errno as errno_location;
+#[cfg(not(target_os = "android"))]
+use libc::__errno_location as errno_location;
+
 /// Read the thread-local `errno`.
 pub(crate) fn errno() -> i32 {
-    // SAFETY: __errno_location() always returns a valid pointer to the
-    // thread-local errno.
-    unsafe { *libc::__errno_location() }
+    // SAFETY: __errno_location() (Bionic: __errno()) always returns a valid
+    // pointer to the thread-local errno.
+    unsafe { *errno_location() }
 }
 
 /// Write the thread-local `errno`.
 pub(crate) fn set_errno(value: i32) {
     // SAFETY: see `errno`.
-    unsafe { *libc::__errno_location() = value }
+    unsafe { *errno_location() = value }
 }
 
 /// Reset `errno` to 0 (the pre-syscall convention used throughout).
@@ -160,7 +165,8 @@ pub(crate) fn prlimit64(
     let newp = new.map_or(std::ptr::null(), |r| r as *const _);
     let oldp = old.map_or(std::ptr::null_mut(), |r| r as *mut _);
     // SAFETY: both pointers are valid or NULL per the prlimit64 contract.
-    unsafe { libc::prlimit64(pid, resource, newp, oldp) }
+    // Bionic declares the resource as `int`, glibc as `unsigned int`.
+    unsafe { libc::prlimit64(pid, resource as _, newp, oldp) }
 }
 
 /// `sigaction(signum, act, oldact)`.
@@ -360,7 +366,8 @@ pub(crate) fn fcntl(fd: RawFd, cmd: i32, arg: i32) -> i32 {
 pub(crate) fn ioctl_val<T>(fd: RawFd, request: libc::c_ulong, arg: &mut T) -> i32 {
     // SAFETY: arg is a valid pointer for the request's in/out struct;
     // callers pass the right struct type for `request`.
-    unsafe { libc::ioctl(fd, request, arg as *mut T) }
+    // Bionic declares the request as `int`, glibc as `unsigned long`.
+    unsafe { libc::ioctl(fd, request as _, arg as *mut T) }
 }
 
 /// `stat(path)`, or `Err(errno)`.
@@ -751,7 +758,8 @@ pub(crate) fn ptrace(request: libc::c_uint, pid: libc::pid_t, addr: usize, data:
     // and provided by the caller. errno reports failure.
     unsafe {
         libc::ptrace(
-            request,
+            // Bionic declares the request as `int`, glibc as `unsigned int`.
+            request as _,
             pid,
             addr as *mut libc::c_void,
             data as *mut libc::c_void,
@@ -934,6 +942,8 @@ mod tests {
     }
 
     #[test]
+    // c_char is i8 on x86_64 but u8 on aarch64.
+    #[allow(clippy::unnecessary_cast)]
     fn uname_and_clock() {
         let u = uname().unwrap();
         let sysname: String = u

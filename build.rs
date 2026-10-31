@@ -148,18 +148,31 @@ fn build_loader(manifest_dir: &Path, out_dir: &Path) {
 
     // Only the host-arch loader is required for the main binary; the optional
     // 32-bit variant is built when the toolchain supports it.
-    let (text_addr, rustc_target): (u64, &str) = match target_arch.as_str() {
+    let (text_addr, gnu_target): (u64, &str) = match target_arch.as_str() {
         "x86_64" => (0x6000_0000_0000, "x86_64-unknown-linux-gnu"),
         "aarch64" => (0x0020_0000_0000, "aarch64-unknown-linux-gnu"),
         "arm" => (0x2000_0000, "armv7-unknown-linux-gnueabihf"),
         "x86" => (0xa000_0000, "i686-unknown-linux-gnu"),
         _ => panic!("unsupported host architecture for loader: {}", target_arch),
     };
+    // Android toolchains ship only the `*-linux-android` standard library;
+    // the freestanding loader builds fine against its `core`.
+    let rustc_target = if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
+        env::var("TARGET").expect("TARGET is set for build scripts")
+    } else {
+        gnu_target.to_string()
+    };
+    // Cross builds need the linker Cargo resolved for the target.
+    let linker = env::var("RUSTC_LINKER").ok();
 
     let loader_src = manifest_dir.join("loader/src/main.rs");
     let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
 
-    let status = Command::new(&rustc)
+    let mut command = Command::new(&rustc);
+    if let Some(linker) = &linker {
+        command.arg(format!("-Clinker={}", linker));
+    }
+    let status = command
         .args([
             "--edition=2024",
             "--crate-type=bin",
@@ -183,7 +196,7 @@ fn build_loader(manifest_dir: &Path, out_dir: &Path) {
                 text_addr
             ),
             "--target",
-            rustc_target,
+            &rustc_target,
             "-o",
         ])
         .arg(&loader_out)

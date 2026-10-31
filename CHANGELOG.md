@@ -10,6 +10,26 @@ re-implements ([Termux PRoot 5.1.0](https://github.com/termux/proot)).
 
 ### Added
 
+- AArch64 host support, for Linux and Android (Bionic):
+  - per-architecture register layer: `user_pt_regs` through
+    `PTRACE_{GET,SET}REGSET`/`NT_PRSTATUS`, syscall-number rewrites through
+    `NT_ARM_SYSTEM_CALL`, AArch32 (compat) register dumps recognized;
+  - arm64/ARM EABI syscall tables, `AUDIT_ARCH_AARCH64`/`AUDIT_ARCH_ARM`
+    seccomp sections, arm64 load addresses, no red zone, 16-byte stack
+    alignment for the loader;
+  - chained and seccomp-restarted syscalls are re-armed through the
+    register the trap reads its number from (`SYSTRAP_NUM`: rax on x86_64,
+    x8 on arm64), and restoring registers at syscall exit skips arguments
+    that alias the result register (x0);
+  - an aarch64 loader (`openat`-based, `svc #0` syscalls);
+  - Android NDK builds (`aarch64-linux-android`, `x86_64-linux-android`):
+    Bionic `errno`, request/resource integer types and missing libc
+    constants are handled;
+  - CI runs the test suite on a native arm64 runner and builds both
+    Android ABIs.
+- `-L` also fixes symlink sizes reported by `newfstatat(…,
+  AT_SYMLINK_NOFOLLOW)` and `statx(…, AT_SYMLINK_NOFOLLOW)`, which is how
+  `lstat()` reaches the kernel on arm64 and with current C libraries.
 - Complete open-source documentation system:
   - `README.md` with feature overview, quick start, and badges
   - mdBook documentation site under `docs/` (user guide, CLI reference,
@@ -25,6 +45,8 @@ re-implements ([Termux PRoot 5.1.0](https://github.com/termux/proot)).
 ### Changed
 
 - Expanded crate-level and module-level rustdoc coverage.
+- Tests that poked x86 register fields directly go through
+  architecture-neutral helpers and run on both hosts.
 
 ## [5.1.0] — clean-room Rust rewrite of PRoot 5.1.0
 

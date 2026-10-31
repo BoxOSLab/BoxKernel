@@ -360,7 +360,8 @@ mod tests {
         assert_eq!(sem_check(&c, &mut sem, Some(&mut wt)), 1); // keep waiting
         assert_eq!(wt, b'n');
         // With IPC_NOWAIT → EAGAIN instead.
-        let c2 = cfg_with_sops(&[(0, -1, libc::IPC_NOWAIT as i16)]);
+        const IPC_NOWAIT: i16 = 0o4000; // Not exported by libc for Bionic.
+        let c2 = cfg_with_sops(&[(0, -1, IPC_NOWAIT)]);
         assert_eq!(sem_check(&c2, &mut sem, None), -libc::EAGAIN);
     }
 

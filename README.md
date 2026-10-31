@@ -100,7 +100,7 @@ The rendered book is published to GitHub Pages by the
 
 ## Building
 
-Requirements: Linux, Rust **1.85+** (pinned by
+Requirements: Linux or Android on x86_64 or aarch64, Rust **1.85+** (pinned by
 [`rust-toolchain.toml`](rust-toolchain.toml)), and a C toolchain is
 *not* needed — the only crate dependency is `libc`.
 

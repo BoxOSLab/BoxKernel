@@ -3,6 +3,7 @@
 //! Real ptrace can't be nested: when a tracee calls ptrace(), PRoot
 //! performs the operation itself and projects the result back.
 
+#[cfg(target_arch = "x86_64")]
 pub mod user;
 pub mod wait;
 
@@ -14,8 +15,10 @@ use crate::tracee::{Seccomp, Tracee, WaitsIn, get_tracee};
 
 /// PTrace request/option constants as `i32` (libc exposes them as `u32`
 /// on Linux/glibc, while all our bookkeeping is `i32`/`Word`), plus the
-/// requests libc lacks on this platform. The table mirrors the complete
-/// request vocabulary even where this port uses only a subset.
+/// requests libc lacks on this platform (Bionic and non-x86 targets miss
+/// the x86 register requests and the PTRACE_SEIZE family, so those are
+/// spelled out numerically). The table mirrors the complete request
+/// vocabulary even where this port uses only a subset.
 #[allow(dead_code)]
 pub mod ptc {
     macro_rules! c {
@@ -38,17 +41,17 @@ pub mod ptc {
     c!(PTRACE_SINGLESTEP);
     c!(PTRACE_ATTACH);
     c!(PTRACE_DETACH);
-    c!(PTRACE_GETREGS);
-    c!(PTRACE_SETREGS);
-    c!(PTRACE_GETFPREGS);
-    c!(PTRACE_SETFPREGS);
+    c!(PTRACE_GETREGS = 12);
+    c!(PTRACE_SETREGS = 13);
+    c!(PTRACE_GETFPREGS = 14);
+    c!(PTRACE_SETFPREGS = 15);
     c!(PTRACE_GETSIGINFO);
     c!(PTRACE_SETSIGINFO);
     c!(PTRACE_GETREGSET);
     c!(PTRACE_SETREGSET);
-    c!(PTRACE_SEIZE);
-    c!(PTRACE_INTERRUPT);
-    c!(PTRACE_LISTEN);
+    c!(PTRACE_SEIZE = 0x4206);
+    c!(PTRACE_INTERRUPT = 0x4207);
+    c!(PTRACE_LISTEN = 0x4208);
     c!(PTRACE_SYSCALL);
     c!(PTRACE_SETOPTIONS);
     c!(PTRACE_GETEVENTMSG);
@@ -122,6 +125,7 @@ fn ptrace_req(request: Word, pid: i32, addr: usize, data: usize) -> i32 {
 pub fn translate_ptrace_exit(ptracer: &mut Tracee) -> i32 {
     let request = peek_reg(ptracer, RegVersion::Original, Reg::Sysarg1);
     let mut pid = peek_reg(ptracer, RegVersion::Original, Reg::Sysarg2);
+    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
     let mut address = peek_reg(ptracer, RegVersion::Original, Reg::Sysarg3);
     let data = peek_reg(ptracer, RegVersion::Original, Reg::Sysarg4);
     let mut forced_signal: i32 = -1;
@@ -253,6 +257,7 @@ pub fn translate_ptrace_exit(ptracer: &mut Tracee) -> i32 {
             return 0;
         }
         crate::ptrace::ptc::PTRACE_PEEKUSER => {
+            #[cfg(target_arch = "x86_64")]
             if is_32on64_mode(ptracer) {
                 address = user::convert_user_offset(address);
                 if address == Word::MAX {
@@ -265,6 +270,7 @@ pub fn translate_ptrace_exit(ptracer: &mut Tracee) -> i32 {
             return peek_data(ptracer, request, ptracee_pid, address, data);
         }
         crate::ptrace::ptc::PTRACE_POKEUSER => {
+            #[cfg(target_arch = "x86_64")]
             if is_32on64_mode(ptracer) {
                 address = user::convert_user_offset(address);
                 if address == Word::MAX {
@@ -325,6 +331,7 @@ pub fn translate_ptrace_exit(ptracer: &mut Tracee) -> i32 {
             }
             return 0;
         }
+        #[cfg(target_arch = "x86_64")]
         crate::ptrace::ptc::PTRACE_GETREGS => {
             let mut buffer = vec![0u8; size_of::<libc::user_regs_struct>()];
             let st = ptrace_req(
@@ -351,6 +358,7 @@ pub fn translate_ptrace_exit(ptracer: &mut Tracee) -> i32 {
             };
             return write_data(ptracer, data, &buffer[..size]);
         }
+        #[cfg(target_arch = "x86_64")]
         crate::ptrace::ptc::PTRACE_SETREGS => {
             let size = if is_32on64_mode(ptracer) {
                 user::USER32_NB_REGS * 4
@@ -384,6 +392,7 @@ pub fn translate_ptrace_exit(ptracer: &mut Tracee) -> i32 {
             }
             return 0;
         }
+        #[cfg(target_arch = "x86_64")]
         crate::ptrace::ptc::PTRACE_GETFPREGS => {
             let fp_sz = size_of::<libc::user_fpregs_struct>()
                 .max(user::USER32_NB_FPREGS * 4);
@@ -406,6 +415,7 @@ pub fn translate_ptrace_exit(ptracer: &mut Tracee) -> i32 {
             };
             return write_data(ptracer, data, &buffer[..size]);
         }
+        #[cfg(target_arch = "x86_64")]
         crate::ptrace::ptc::PTRACE_SETFPREGS => {
             if is_32on64_mode(ptracer) {
                 crate::note!(
@@ -428,6 +438,7 @@ pub fn translate_ptrace_exit(ptracer: &mut Tracee) -> i32 {
             }
             return 0;
         }
+        #[cfg(target_arch = "x86_64")]
         25 /* PTRACE_GET_THREAD_AREA */ => {
             let mut user_desc = [0u8; 16];
             let st = ptrace_req(
@@ -441,6 +452,7 @@ pub fn translate_ptrace_exit(ptracer: &mut Tracee) -> i32 {
             }
             return write_data(ptracer, data, &user_desc);
         }
+        #[cfg(target_arch = "x86_64")]
         26 /* PTRACE_SET_THREAD_AREA */ => {
             let mut user_desc = [0u8; 16];
             let st = read_data(ptracer, &mut user_desc, data);

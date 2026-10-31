@@ -1221,8 +1221,8 @@ mod tests {
         let mut t = test_tracee("/", &[]);
         poke_reg(&mut t, Reg::SysargNum, Sysnum::clone as Word);
         // get_sysnum decodes via the ABI table.
-        t.regs[RegVersion::Current.idx()].orig_rax =
-            crate::sysnum::detranslate_sysnum(crate::tracee::reg::get_abi(&t), Sysnum::clone);
+        let n = crate::sysnum::detranslate_sysnum(crate::tracee::reg::get_abi(&t), Sysnum::clone);
+        crate::tracee::reg::set_bank_reg(&mut t, RegVersion::Current, Reg::SysargNum, n);
         poke_reg(&mut t, Reg::Sysarg2, 0xDEAD_0000);
         assert_eq!(new_child_stack(&mut t), 0xDEAD_0000);
     }
@@ -1236,8 +1236,8 @@ mod tests {
         let args_addr = arena.addr() + 512;
         crate::tracee::mem::write_data(&t, args_addr + 5 * 8, &0xAAAA_0000u64.to_ne_bytes());
         crate::tracee::mem::write_data(&t, args_addr + 6 * 8, &0x4000u64.to_ne_bytes());
-        t.regs[RegVersion::Current.idx()].orig_rax =
-            crate::sysnum::detranslate_sysnum(crate::tracee::reg::get_abi(&t), Sysnum::clone3);
+        let n = crate::sysnum::detranslate_sysnum(crate::tracee::reg::get_abi(&t), Sysnum::clone3);
+        crate::tracee::reg::set_bank_reg(&mut t, RegVersion::Current, Reg::SysargNum, n);
         poke_reg(&mut t, Reg::Sysarg1, args_addr);
         // child stack = clone_args.stack + clone_args.stack_size
         assert_eq!(new_child_stack(&mut t), 0xAAAA_4000);
@@ -1246,8 +1246,8 @@ mod tests {
     #[test]
     fn new_child_stack_fork_falls_back_to_sp() {
         let mut t = test_tracee("/", &[]);
-        t.regs[RegVersion::Current.idx()].orig_rax =
-            crate::sysnum::detranslate_sysnum(crate::tracee::reg::get_abi(&t), Sysnum::fork);
+        let n = crate::sysnum::detranslate_sysnum(crate::tracee::reg::get_abi(&t), Sysnum::fork);
+        crate::tracee::reg::set_bank_reg(&mut t, RegVersion::Current, Reg::SysargNum, n);
         poke_reg(&mut t, Reg::StackPointer, 0x7777_8888);
         assert_eq!(new_child_stack(&mut t), 0x7777_8888);
     }
@@ -1347,8 +1347,8 @@ mod tests {
     #[test]
     fn resolve_pending_child_ignores_non_fork() {
         let mut t = test_tracee("/", &[]);
-        t.regs[RegVersion::Original.idx()].orig_rax =
-            crate::sysnum::detranslate_sysnum(crate::tracee::reg::get_abi(&t), Sysnum::getpid);
+        let n = crate::sysnum::detranslate_sysnum(crate::tracee::reg::get_abi(&t), Sysnum::getpid);
+        crate::tracee::reg::set_bank_reg(&mut t, RegVersion::Original, Reg::SysargNum, n);
         t.pending_child = true;
         resolve_pending_child(&mut t);
         assert!(t.pending_child); // untouched

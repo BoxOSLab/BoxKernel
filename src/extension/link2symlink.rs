@@ -833,7 +833,9 @@ fn handle_sysexit_end(tracee: &mut Tracee, config: &mut L2sConfig) -> i32 {
             let len = final_path.len();
             final_stat.st_nlink = std::str::from_utf8(&final_path[len - 4..])
                 .ok()
-                .and_then(|s| s.parse::<libc::nlink_t>().ok())
+                // st_nlink's width follows the kernel ABI, not nlink_t
+                // (Bionic's x86_64 `struct stat` uses a 64-bit field).
+                .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
 
             // Get the address of the 'stat' structure.

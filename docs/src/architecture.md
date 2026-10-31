@@ -45,7 +45,7 @@ syscall flows through the system.
 | `src/extension/` | `extension/` | Typed `Event` enum + `AnyExtension` dispatcher + the 8 built-in extensions |
 | `src/syscall/` (seccomp) | `syscall/seccomp.c` | BPF program building, `seccomp` filter installation, SIGSYS trapping |
 | `src/sysnum.rs` + `data/sysnums-*.txt` | `syscall/sysnums-*.list` + gen | Per-ABI syscall-number tables, code-generated at build time |
-| `src/arch.rs` | `arch.h` | Host word size, reg layouts |
+| `src/arch.rs` | `arch.h` | Per-host-architecture constants (x86_64, aarch64): trap size, red zone, load addresses, seccomp audit arches |
 | `src/sys.rs` | all of libc | **The FFI boundary** — the only module allowed to call libc directly |
 | `src/note.rs` | `cli/note.c` | `note!`/`verbose!` diagnostics with severity levels |
 | `src/util.rs` | misc | Small shared helpers |
@@ -60,7 +60,9 @@ syscall flows through the system.
    semantics — later SIGTRAPs re-inject so guest handlers see them).
 
 2. **Enter.** `syscall/enter.rs::translate_sysenter` reads the syscall
-   number + args via `tracee/reg.rs` (`PTRACE_GETREGS`). The sysnum is
+   number + args via `tracee/reg.rs` (`PTRACE_GETREGS` on x86_64;
+   `PTRACE_GETREGSET`/`NT_PRSTATUS` on aarch64, where a rewritten
+   syscall number goes back through `NT_ARM_SYSTEM_CALL`). The sysnum is
    decoded ABI-aware (`sysnum.rs` + `data/sysnums-*.txt` for
    x86_64/x32/i386/arm/arm64/sh4). Extensions get `SysEnterStart`, then
    the per-syscall translator runs; extensions get `SysEnterEnd`.
@@ -147,8 +149,10 @@ for the enforced invariants.
 time (to hand registers/auxv back to the tracer). `loader/` is a
 `no_std`, position-independent, naked-function crate built as a raw
 binary and `include_bytes!`'d into the main crate. Its `unsafe` is
-inherent (assembly syscall stubs) and intentionally isolated from the
-safe code base.
+inherent (assembly syscall stubs and the final branch, written for
+x86_64 and aarch64; arm64 has no `open(2)`, so the loader uses
+`openat(AT_FDCWD, …)` there) and intentionally isolated from the safe
+code base.
 
 ## Seccomp acceleration
 

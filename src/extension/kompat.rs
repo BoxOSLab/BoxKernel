@@ -889,6 +889,8 @@ fn parse_utsname(config: &mut Config, string: &str) -> i32 {
         Err(_) => -1,
     };
     if status >= 0 {
+        // c_char is i8 on x86_64 but u8 on aarch64.
+        #[allow(clippy::unnecessary_cast)]
         let field = |f: &[libc::c_char; 65]| f.iter().map(|&c| c as u8).collect::<Vec<u8>>();
         let mut host = Utsname::default();
         host.set(0, &field(&host_uts.sysname));
@@ -1170,7 +1172,7 @@ mod tests {
     #[test]
     fn modify_syscall_shifts_args() {
         let mut t = Tracee::default();
-        t.regs[RegVersion::Current.idx()].cs = 0x33; // native ABI
+        crate::tracee::reg::set_bank_compat(&mut t, RegVersion::Current, false); // native ABI
         poke_reg(&mut t, sysarg(1), 0x111);
         poke_reg(&mut t, sysarg(2), 0x222);
         let c = mkconfig((3, 0, 0), (5, 0, 0));

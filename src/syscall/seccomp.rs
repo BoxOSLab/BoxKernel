@@ -4,7 +4,7 @@
 //! PRoot actually translates, letting everything else run untraced.
 
 use crate::Word;
-use crate::sysnum::{Abi, Sysnum, detranslate_sysnum};
+use crate::sysnum::{Sysnum, detranslate_sysnum};
 
 /// Flags attached to filtered syscalls (readable via PTRACE_GETEVENTMSG).
 pub const FILTER_SYSEXIT: Word = 0x1;
@@ -20,9 +20,6 @@ const BPF_RET: u16 = 0x06;
 const SECCOMP_RET_KILL: u32 = 0x0000_0000;
 const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
 const SECCOMP_RET_TRACE: u32 = 0x7ff0_0000;
-
-const AUDIT_ARCH_X86_64: u32 = 0xc000_003e;
-const AUDIT_ARCH_I386: u32 = 0x4000_0003;
 
 const PR_SET_NO_NEW_PRIVS: i32 = 38;
 const PR_SET_SECCOMP: i32 = 22;
@@ -498,18 +495,15 @@ fn add_trace_syscall(prog: &mut Vec<SockFilter>, syscall: Word, flag: Word) {
 /// for each arch { if arch → for each sysnum → trace }, else allow; kill
 /// as the final catch-all.
 fn set_seccomp_filters(sysnums: &[FilteredSysnum]) -> i32 {
-    // (audit arch, [abis]) — x86_64 hosts trace x86_64+x32 under
+    // (audit arch, [abis]) — e.g. x86_64 hosts trace x86_64+x32 under
     // AUDIT_ARCH_X86_64, i386 under AUDIT_ARCH_I386.
-    let archs: &[(u32, &[Abi])] = &[
-        (AUDIT_ARCH_X86_64, &[Abi::Default, Abi::Abi3]),
-        (AUDIT_ARCH_I386, &[Abi::Abi2]),
-    ];
+    let archs = crate::arch::SECCOMP_ARCHS.iter().map(|a| (a.value, a.abis));
 
     let mut prog: Vec<SockFilter> = Vec::new();
 
     for (arch, abis) in archs {
         let mut nb_traced = 0usize;
-        for abi in *abis {
+        for abi in abis {
             for s in sysnums {
                 if detranslate_sysnum(*abi, s.value) != crate::arch::SYSCALL_AVOIDER {
                     nb_traced += 1;
@@ -517,8 +511,8 @@ fn set_seccomp_filters(sysnums: &[FilteredSysnum]) -> i32 {
             }
         }
 
-        start_arch_section(&mut prog, *arch, nb_traced);
-        for abi in *abis {
+        start_arch_section(&mut prog, arch, nb_traced);
+        for abi in abis {
             for s in sysnums {
                 let syscall = detranslate_sysnum(*abi, s.value);
                 if syscall == crate::arch::SYSCALL_AVOIDER {
@@ -595,10 +589,10 @@ mod tests {
 
     #[test]
     fn stmt_and_jump_layout() {
-        let s = stmt(libc::BPF_LD as u16, 42);
-        assert_eq!((s.code, s.jt, s.jf, s.k), (libc::BPF_LD as u16, 0, 0, 42));
-        let j = jump(libc::BPF_JMP as u16, 7, 1, 2);
-        assert_eq!((j.code, j.jt, j.jf, j.k), (libc::BPF_JMP as u16, 1, 2, 7));
+        let s = stmt(BPF_LD, 42);
+        assert_eq!((s.code, s.jt, s.jf, s.k), (BPF_LD, 0, 0, 42));
+        let j = jump(BPF_JMP, 7, 1, 2);
+        assert_eq!((j.code, j.jt, j.jf, j.k), (BPF_JMP, 1, 2, 7));
         assert_eq!(size_of::<SockFilter>(), 8);
     }
 

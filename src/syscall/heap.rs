@@ -165,8 +165,8 @@ mod tests {
 
     fn t() -> Tracee {
         let mut t = Tracee::default();
-        t.regs[RegVersion::Original.idx()].cs = 0x33;
-        t.regs[RegVersion::Current.idx()].cs = 0x33;
+        crate::tracee::reg::set_bank_compat(&mut t, RegVersion::Original, false);
+        crate::tracee::reg::set_bank_compat(&mut t, RegVersion::Current, false);
         t
     }
 
@@ -330,7 +330,7 @@ mod tests {
         poke_reg(&mut t, Reg::SysargNum, n);
         crate::tracee::reg::save_current_regs(&mut t, RegVersion::Modified);
         // Result equals the originally requested brk -> legit, stop emulating.
-        t.regs[RegVersion::Original.idx()].rdi = 0xDEAD;
+        crate::tracee::reg::set_bank_reg(&mut t, RegVersion::Original, Reg::Sysarg1, 0xDEAD);
         poke_reg(&mut t, Reg::SysargResult, 0xDEAD);
         translate_brk_exit(&mut t);
         assert!(t.heap.borrow().disabled);

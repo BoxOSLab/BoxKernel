@@ -87,13 +87,13 @@ pub fn chain_next_syscall(tracee: &mut Tracee) {
             for (i, arg) in syscall.sysargs.iter().enumerate() {
                 poke_reg(tracee, crate::tracee::reg::sysarg(i + 1), *arg);
             }
-            // The re-executed `syscall` instruction takes its number from
-            // the *result* register (rax on x86_64) — C pokes SYSTRAP_NUM.
+            // The re-executed trap takes its number from SYSTRAP_NUM: the
+            // *result* register on x86_64 (rax), x8 on aarch64.
             let n = crate::sysnum::detranslate_sysnum(
                 crate::tracee::reg::get_abi(tracee),
                 syscall.sysnum,
             );
-            poke_reg(tracee, Reg::SysargResult, n);
+            poke_reg(tracee, crate::tracee::reg::SYSTRAP_NUM, n);
             let ip = peek_reg(tracee, RegVersion::Current, Reg::InstrPointer);
             poke_reg(
                 tracee,
@@ -146,11 +146,13 @@ pub fn restart_current_syscall_as_chained(tracee: &mut Tracee) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sysnum::{Abi, detranslate_sysnum};
+    use crate::tracee::reg::{SYSTRAP_NUM, set_bank_compat, set_bank_reg};
 
     fn t() -> Tracee {
         let mut t = Tracee::default();
         // Give it a sane instruction pointer.
-        t.regs[RegVersion::Current.idx()].rip = 0x1000;
+        set_bank_reg(&mut t, RegVersion::Current, Reg::InstrPointer, 0x1000);
         t
     }
 
@@ -181,17 +183,24 @@ mod tests {
     #[test]
     fn chain_next_arms_registers_and_rewinds_ip() {
         let mut t = t();
-        t.regs[RegVersion::Original.idx()].cs = 0x33;
-        t.regs[RegVersion::Current.idx()].cs = 0x33;
+        set_bank_compat(&mut t, RegVersion::Original, false);
+        set_bank_compat(&mut t, RegVersion::Current, false);
         register_chained_syscall(&mut t, Sysnum::write, [10, 20, 30, 40, 50, 60]);
         chain_next_syscall(&mut t);
         let c = RegVersion::Current;
         assert_eq!(peek_reg(&t, c, Reg::Sysarg1), 10);
         assert_eq!(peek_reg(&t, c, Reg::Sysarg6), 60);
-        // x86_64 write == 1, delivered via the result register.
-        assert_eq!(peek_reg(&t, c, Reg::SysargResult), 1);
+        // The number goes where the trap reads it (rax on x86_64, x8 on
+        // aarch64) without clobbering the arguments.
+        assert_eq!(
+            peek_reg(&t, c, SYSTRAP_NUM),
+            detranslate_sysnum(Abi::Default, Sysnum::write)
+        );
         // IP stepped back over the syscall instruction.
-        assert_eq!(peek_reg(&t, c, Reg::InstrPointer), 0x1000 - 2);
+        assert_eq!(
+            peek_reg(&t, c, Reg::InstrPointer),
+            0x1000 - crate::arch::SYSTRAP_SIZE
+        );
         assert!(!t.restore_original_regs);
         assert_eq!(t.restart_how, crate::ptrace::ptc::PTRACE_SYSCALL);
     }
@@ -228,8 +237,13 @@ mod tests {
         let o = RegVersion::Original;
         t.regs[o.idx()] = t.regs[RegVersion::Current.idx()];
         poke_reg(&mut t, Reg::Sysarg1, 99); // current differs
-        t.regs[o.idx()].rdi = 7;
-        t.regs[o.idx()].orig_rax = 0; // read
+        set_bank_reg(&mut t, o, Reg::Sysarg1, 7);
+        set_bank_reg(
+            &mut t,
+            o,
+            Reg::SysargNum,
+            detranslate_sysnum(Abi::Default, Sysnum::read),
+        );
         assert_eq!(restart_original_syscall(&mut t), 0);
         let q = t.chain.syscalls.as_ref().unwrap();
         assert_eq!(q[0].sysnum, Sysnum::read);
@@ -252,13 +266,13 @@ mod tests {
     }
 
     #[test]
-    fn chain_under_i386_abi_detranslates_number() {
+    fn chain_under_compat_abi_detranslates_number() {
         let mut t = t();
-        t.regs[RegVersion::Original.idx()].cs = 0x23;
-        t.regs[RegVersion::Current.idx()].cs = 0x23;
+        set_bank_compat(&mut t, RegVersion::Original, true);
+        set_bank_compat(&mut t, RegVersion::Current, true);
         register_chained_syscall(&mut t, Sysnum::write, [0; 6]);
         chain_next_syscall(&mut t);
-        // i386 write == 4.
-        assert_eq!(peek_reg(&t, RegVersion::Current, Reg::SysargResult), 4);
+        // i386 and ARM EABI write == 4.
+        assert_eq!(peek_reg(&t, RegVersion::Current, SYSTRAP_NUM), 4);
     }
 }

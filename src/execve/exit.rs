@@ -135,8 +135,9 @@ fn transfer_load_script(tracee: &mut Tracee) -> i32 {
     let string2_size = string2.len() as Word;
     let string3_size = string3.len() as Word;
 
-    // Align the strings block to a word boundary (16 on aarch64).
-    let align = w; // x86_64: sizeof_word; aarch64 would be 16
+    // Align the strings block to a word boundary, or to the stricter stack
+    // alignment the host ABI demands (16 bytes on aarch64).
+    let align = w.max(crate::arch::STACK_ALIGNMENT);
     let padding_size = (stack_pointer - string1_size - string2_size - string3_size) % align;
     let strings_size = string1_size + string2_size + string3_size + padding_size;
 
@@ -199,10 +200,13 @@ fn transfer_load_script(tracee: &mut Tracee) -> i32 {
     buffer.extend(std::iter::repeat_n(0, padding_size as usize));
 
     let buffer_size = buffer.len() as Word;
-    poke_reg(tracee, Reg::StackPointer, stack_pointer - buffer_size);
-    poke_reg(tracee, Reg::Userarg1, stack_pointer - buffer_size);
+    let script_address = stack_pointer - buffer_size;
+    // The script itself is word-aligned; the loader's stack must also meet
+    // the ABI alignment, so start it just below the script.
+    poke_reg(tracee, Reg::StackPointer, script_address & !(align - 1));
+    poke_reg(tracee, Reg::Userarg1, script_address);
 
-    let status = write_data(tracee, stack_pointer - buffer_size, &buffer);
+    let status = write_data(tracee, script_address, &buffer);
     if status < 0 {
         return status;
     }

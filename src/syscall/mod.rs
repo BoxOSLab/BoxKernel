@@ -276,24 +276,30 @@ mod tests {
 
     #[test]
     fn is_voided_syscall_detection() {
+        use crate::tracee::reg::{set_bank_compat, set_bank_reg};
+        let (c, o, avoider) = (
+            RegVersion::Current,
+            RegVersion::Original,
+            crate::arch::SYSCALL_AVOIDER,
+        );
         let mut t = Tracee::default();
         // Current = avoider, Original = a real sysnum -> voided.
-        t.regs[RegVersion::Current.idx()].orig_rax = crate::arch::SYSCALL_AVOIDER;
-        t.regs[RegVersion::Original.idx()].orig_rax = 0;
+        set_bank_reg(&mut t, c, Reg::SysargNum, avoider);
+        set_bank_reg(&mut t, o, Reg::SysargNum, 0);
         assert!(is_voided_syscall(&t, RegVersion::Current));
         // Both avoider -> not a voided original.
-        t.regs[RegVersion::Original.idx()].orig_rax = crate::arch::SYSCALL_AVOIDER;
+        set_bank_reg(&mut t, o, Reg::SysargNum, avoider);
         assert!(!is_voided_syscall(&t, RegVersion::Current));
         // Real syscall -> not voided.
         let mut t = Tracee::default();
-        t.regs[RegVersion::Current.idx()].orig_rax = 0;
-        t.regs[RegVersion::Original.idx()].orig_rax = 0;
+        set_bank_reg(&mut t, c, Reg::SysargNum, 0);
+        set_bank_reg(&mut t, o, Reg::SysargNum, 0);
         assert!(!is_voided_syscall(&t, RegVersion::Current));
         // 32-bit ABI: avoider masked to 32 bits.
         let mut t = Tracee::default();
-        t.regs[RegVersion::Current.idx()].cs = 0x23;
-        t.regs[RegVersion::Current.idx()].orig_rax = crate::arch::SYSCALL_AVOIDER;
-        t.regs[RegVersion::Original.idx()].orig_rax = 0;
+        set_bank_compat(&mut t, c, true);
+        set_bank_reg(&mut t, c, Reg::SysargNum, avoider);
+        set_bank_reg(&mut t, o, Reg::SysargNum, 0);
         assert!(is_voided_syscall(&t, RegVersion::Current));
     }
 

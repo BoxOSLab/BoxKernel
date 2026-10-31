@@ -134,6 +134,11 @@ mod imp {
         ret
     }
 
+    #[inline(always)]
+    pub unsafe fn open_rdonly(path: word_t) -> word_t {
+        syscall3(NR_OPEN, path, O_RDONLY, 0)
+    }
+
     /// Restore the initial stack pointer, clear state flags and rtld_fini,
     /// then jump to the program entry point.
     ///
@@ -151,8 +156,67 @@ mod imp {
     }
 }
 
-#[cfg(not(target_arch = "x86_64"))]
-compile_error!("loader is currently implemented for x86_64 only");
+#[cfg(target_arch = "aarch64")]
+mod imp {
+    use super::*;
+
+    pub const NR_OPENAT: word_t = 56;
+    pub const NR_CLOSE: word_t = 57;
+    pub const NR_MMAP: word_t = 222;
+    pub const NR_MPROTECT: word_t = 226;
+    pub const NR_EXECVE: word_t = 221;
+    pub const NR_EXIT: word_t = 93;
+    pub const NR_PRCTL: word_t = 167;
+
+    const AT_FDCWD: word_t = -100isize as word_t;
+
+    #[inline(always)]
+    pub unsafe fn syscall1(n: word_t, a1: word_t) -> word_t {
+        let ret: word_t;
+        asm!("svc #0", in("x8") n, inlateout("x0") a1 => ret, options(nostack));
+        ret
+    }
+
+    #[inline(always)]
+    pub unsafe fn syscall3(n: word_t, a1: word_t, a2: word_t, a3: word_t) -> word_t {
+        let ret: word_t;
+        asm!("svc #0", in("x8") n, inlateout("x0") a1 => ret, in("x1") a2,
+             in("x2") a3, options(nostack));
+        ret
+    }
+
+    #[inline(always)]
+    pub unsafe fn syscall6(n: word_t, a1: word_t, a2: word_t, a3: word_t,
+                           a4: word_t, a5: word_t, a6: word_t) -> word_t {
+        let ret: word_t;
+        asm!("svc #0", in("x8") n, inlateout("x0") a1 => ret, in("x1") a2,
+             in("x2") a3, in("x3") a4, in("x4") a5, in("x5") a6, options(nostack));
+        ret
+    }
+
+    /// There is no open(2) on arm64; PRoot translates the openat() path.
+    #[inline(always)]
+    pub unsafe fn open_rdonly(path: word_t) -> word_t {
+        syscall6(NR_OPENAT, AT_FDCWD, path, O_RDONLY, 0, 0, 0)
+    }
+
+    /// Restore the initial stack pointer, clear rtld_fini (x0), then jump to
+    /// the program entry point.
+    ///
+    /// # Safety
+    /// Diverges; `stack_pointer` must denote a valid initial stack image.
+    #[unsafe(naked)]
+    pub unsafe extern "C" fn branch(stack_pointer: word_t, destination: word_t) -> ! {
+        core::arch::naked_asm!(
+            "mov sp, x0",
+            "mov x0, xzr",
+            "br x1",
+        )
+    }
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+compile_error!("loader is implemented for x86_64 and aarch64 only");
 
 use imp::*;
 
@@ -206,7 +270,7 @@ pub unsafe extern "C" fn _start(cursor: word_t) -> ! {
                         fatal();
                     }
                 }
-                fd = syscall3(NR_OPEN, payload.open.string_address, O_RDONLY, 0);
+                fd = open_rdonly(payload.open.string_address);
                 if (fd as isize) < 0 {
                     fatal();
                 }
