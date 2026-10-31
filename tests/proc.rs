@@ -51,3 +51,33 @@ fn proc_mounts_readable() {
     );
     assert!(stdout(&out).contains("mounts-readable"));
 }
+
+#[test]
+fn native_paths_keep_proc_exe_correct_in_both_loader_modes() {
+    if !have("python3") {
+        return;
+    }
+    let f = Fixture::new("proc-native-paths");
+    f.symlink("/proc", "proc-alias");
+    let alias = f
+        .root
+        .join("proc-alias/self/exe")
+        .to_string_lossy()
+        .into_owned();
+    let script = r#"
+import os, sys
+with open('/proc/self/exe', 'rb') as direct, open(sys.argv[1], 'rb') as alias:
+    left, right = os.fstat(direct.fileno()), os.fstat(alias.fileno())
+    assert (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
+assert os.path.realpath(os.readlink('/proc/self/exe')) == os.path.realpath(sys.executable)
+print('proc-ok')
+"#;
+    for env in [
+        vec![],
+        vec![("BOXKERNEL_LEGACY_LOADER", "1")],
+        vec![("BOXKERNEL_NO_NATIVE_PATHS", "1")],
+    ] {
+        let out = run_ok(&["python3", "-c", script, &alias], &env);
+        assert_eq!(stdout(&out), "proc-ok\n");
+    }
+}

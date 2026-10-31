@@ -2,7 +2,7 @@
 
 use crate::Word;
 use crate::tracee::Tracee;
-use crate::tracee::mem::{peek_word, poke_word};
+use crate::tracee::mem::{peek_word, poke_word, read_data};
 use crate::tracee::reg::{Reg, RegVersion, peek_reg, sizeof_word};
 
 pub const AT_NULL: Word = 0;
@@ -35,58 +35,114 @@ pub struct ElfAuxVector {
 /// stack right after a successful execve (valid only in execve sysexit).
 /// Returns 0 on error.
 pub fn get_elf_aux_vectors_address(tracee: &Tracee) -> Word {
-    let w = sizeof_word(tracee) as Word;
-    let mut address = peek_reg(tracee, RegVersion::Current, Reg::StackPointer);
-    crate::sys::clear_errno();
+    get_elf_aux_vectors_address_at(
+        tracee,
+        peek_reg(tracee, RegVersion::Current, Reg::StackPointer),
+    )
+}
 
-    // argc, then argv[] + NULL.
-    let argc = peek_word(tracee, address);
+/// Locate auxv in a saved initial stack after the tracee has started.
+fn get_elf_aux_vectors_address_at(tracee: &Tracee, stack_pointer: Word) -> Word {
+    // Linux's argv/envp allowance is at most 6 MiB. Leave headroom, but
+    // never trust guest-writable argc or an unterminated envp indefinitely.
+    const MAX_INITIAL_STACK_BYTES: Word = 16 * 1024 * 1024;
+    let w = sizeof_word(tracee) as Word;
+    let Some(limit) = stack_pointer.checked_add(MAX_INITIAL_STACK_BYTES) else {
+        return 0;
+    };
+    crate::sys::clear_errno();
+    let argc = peek_word(tracee, stack_pointer);
     if crate::sys::errno() != 0 {
         return 0;
     }
-    address += (1 + argc + 1) * w;
+    let Some(argv_bytes) = argc.checked_add(2).and_then(|n| n.checked_mul(w)) else {
+        return 0;
+    };
+    if argv_bytes > MAX_INITIAL_STACK_BYTES {
+        return 0;
+    }
+    let Some(mut address) = stack_pointer.checked_add(argv_bytes) else {
+        return 0;
+    };
 
-    // envp[] + NULL.
-    loop {
-        let data = peek_word(tracee, address);
-        if crate::sys::errno() != 0 {
+    // Scan envp in bounded chunks that never cross a guest page. Only the
+    // terminating NULL matters; no environment-string pointer is followed.
+    let page_size = crate::sys::page_size() as Word;
+    let mut pointers = [0u8; 4096];
+    while address < limit {
+        let size = (page_size - address % page_size)
+            .min(limit - address)
+            .min(pointers.len() as Word)
+            / w
+            * w;
+        if size == 0 || read_data(tracee, &mut pointers[..size as usize], address) < 0 {
             return 0;
         }
-        address += w;
-        if data == 0 {
-            break;
+        for pointer in pointers[..size as usize].chunks_exact(w as usize) {
+            // The bounded chunk ensures this addition cannot overflow.
+            address += w;
+            if pointer.iter().all(|byte| *byte == 0) {
+                return address;
+            }
         }
     }
-    address
+    0
 }
 
 /// `fetch_elf_aux_vectors()` — read the AT_NULL-terminated vector list.
 pub fn fetch_elf_aux_vectors(tracee: &Tracee, address: Word) -> Option<Vec<ElfAuxVector>> {
+    // The kernel currently emits fewer than 64 pairs. A corrupt guest
+    // table must not cause an unbounded remote-memory walk.
+    const MAX_AUXV_ENTRIES: usize = 256;
     let w = sizeof_word(tracee) as Word;
     let mut address = address;
     let mut vectors = Vec::new();
-    loop {
+    for _ in 0..MAX_AUXV_ENTRIES {
         crate::sys::clear_errno();
         let atype = peek_word(tracee, address);
         if crate::sys::errno() != 0 {
             return None;
         }
-        address += w;
+        address = address.checked_add(w)?;
         if atype == AT_NULL {
-            break;
+            vectors.push(ElfAuxVector {
+                atype: AT_NULL,
+                value: 0,
+            });
+            return Some(vectors);
         }
         let value = peek_word(tracee, address);
         if crate::sys::errno() != 0 {
             return None;
         }
-        address += w;
+        address = address.checked_add(w)?;
         vectors.push(ElfAuxVector { atype, value });
     }
-    vectors.push(ElfAuxVector {
-        atype: AT_NULL,
-        value: 0,
-    });
-    Some(vectors)
+    None
+}
+
+/// Snapshot the custom loader's corrected vectors on the first proc-auxv
+/// open. Reading the regular file then works through dup, pread, readv and
+/// close_range without intercepting read syscalls or tracking fd numbers.
+pub(crate) fn snapshot_file(tracee: &mut Tracee) -> Result<std::rc::Rc<str>, i32> {
+    use std::os::unix::fs::PermissionsExt;
+    if let Some(path) = &tracee.auxv_file {
+        return Ok(path.clone());
+    }
+    let address = get_elf_aux_vectors_address_at(tracee, tracee.auxv_stack_pointer);
+    if address == 0 {
+        return Err(-libc::EIO);
+    }
+    let vectors = fetch_elf_aux_vectors(tracee, address).ok_or(-libc::EIO)?;
+    let path = crate::path::temp::create_temp_file("auxv").ok_or(-libc::EIO)?;
+    if crate::execve::exit::fill_file_with_auxv(tracee, &path, &vectors) < 0 {
+        return Err(-libc::EIO);
+    }
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400))
+        .map_err(|error| -error.raw_os_error().unwrap_or(libc::EIO))?;
+    let path: std::rc::Rc<str> = std::rc::Rc::from(path);
+    tracee.auxv_file = Some(path.clone());
+    Ok(path)
 }
 
 /// `push_elf_aux_vectors()` — write the vector list back to `address`.
@@ -216,6 +272,58 @@ mod tests {
         let v2 = fetch_elf_aux_vectors(&t, dst).unwrap();
         assert_eq!(v2.len(), 4);
         assert_eq!(v2[2].value, 0xBEEF);
+    }
+
+    #[test]
+    fn lazy_snapshot_uses_initial_stack_and_is_reused() {
+        let arena = Arena::new(2);
+        let Some(child) = fork_child(&arena) else {
+            return;
+        };
+        let mut t = child.tracee();
+        let address = fake_stack(
+            &mut t,
+            &arena,
+            1,
+            1,
+            &[(AT_BASE, 0x4000), (AT_EXECFN, 0xBEEF)],
+        );
+        t.auxv_stack_pointer = arena.addr() + 0x800;
+        // The running program's current SP need not still point at argc.
+        poke_reg_sp(&mut t, arena.addr() + 0x1800);
+        let first = snapshot_file(&mut t).unwrap();
+        let data = std::fs::read(first.as_ref()).unwrap();
+        let words: Vec<u64> = data
+            .chunks_exact(8)
+            .map(|word| u64::from_ne_bytes(word.try_into().unwrap()))
+            .collect();
+        assert_eq!(words, [AT_BASE, 0x4000, AT_EXECFN, 0xBEEF, AT_NULL, 0]);
+        // A cached file is an exec-time view; subsequent opens reuse it.
+        poke_word(&t, address + 8, 0x8000);
+        let second = snapshot_file(&mut t).unwrap();
+        assert!(std::rc::Rc::ptr_eq(&first, &second));
+        assert_eq!(std::fs::read(second.as_ref()).unwrap(), data);
+    }
+
+    #[test]
+    fn lazy_snapshot_rejects_corrupt_argc_and_unterminated_vectors() {
+        let arena = Arena::new(2);
+        let Some(child) = fork_child(&arena) else {
+            return;
+        };
+        let mut t = child.tracee();
+        let address = fake_stack(&mut t, &arena, 1, 1, &[(AT_BASE, 0x4000)]);
+        let initial_sp = arena.addr() + 0x800;
+        t.auxv_stack_pointer = initial_sp;
+        poke_word(&t, initial_sp, Word::MAX);
+        assert!(matches!(snapshot_file(&mut t), Err(error) if error == -libc::EIO));
+        poke_word(&t, initial_sp, 1);
+        for offset in 0..256 {
+            poke_word(&t, address + offset * 16, AT_IGNORE);
+            poke_word(&t, address + offset * 16 + 8, 0);
+        }
+        assert!(matches!(snapshot_file(&mut t), Err(error) if error == -libc::EIO));
+        assert_eq!(get_elf_aux_vectors_address_at(&t, Word::MAX), 0);
     }
 
     #[test]

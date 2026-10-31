@@ -88,7 +88,12 @@ fn substitute_binding_stat(
                 mode: 0,
             }
         }
-        None => match crate::sys::lstat(host_path.as_c_str()) {
+        None => match crate::path::cache::lstat(
+            host_path.as_c_str(),
+            tracee.glue_type == 0
+                && !finality.is_final()
+                && !crate::path::cache::is_dynamic_path(guest_path.as_bytes()),
+        ) {
             Ok(v) => {
                 st = Some(v);
                 HostStat {

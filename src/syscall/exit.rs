@@ -161,7 +161,14 @@ pub fn translate_syscall_exit(tracee: &mut Tracee) {
             } else {
                 Reg::Sysarg2
             };
-            if (syscall_result as i64) < 0 || tracee.execfn_addr == 0 {
+            // Snapshot bytes are already corrected. In particular, a
+            // partial read must never be mistaken for a fresh auxv table.
+            let snapshot = tracee.auxv_file.as_ref().is_some_and(|file| {
+                tracee
+                    .enter_path(path_reg)
+                    .is_some_and(|path| path.host_path.as_bytes() == file.as_bytes())
+            });
+            if (syscall_result as i64) < 0 || tracee.execfn_addr == 0 || snapshot {
                 Flow::End
             } else {
                 let mut buf = [0u8; "/proc/self/auxv".len()];
@@ -174,6 +181,8 @@ pub fn translate_syscall_exit(tracee: &mut Tracee) {
                     Flow::End
                 } else {
                     tracee.auxv_fd = syscall_result as i32;
+                    tracee.auxv_fd_identity =
+                        crate::tracee::FdIdentity::read(tracee.pid, tracee.auxv_fd);
                     tracee.sysexit_pending = true;
                     tracee.restart_how = crate::ptrace::ptc::PTRACE_SYSCALL;
                     Flow::End
@@ -189,7 +198,11 @@ pub fn translate_syscall_exit(tracee: &mut Tracee) {
                 let result = syscall_result;
                 if result == 0
                     || (result as i64) < 0
-                    || peek_reg(tracee, RegVersion::Original, Reg::Sysarg1) as i32 != tracee.auxv_fd
+                    || tracee.auxv_fd_identity.is_none()
+                    || crate::tracee::FdIdentity::read(
+                        tracee.pid,
+                        peek_reg(tracee, RegVersion::Original, Reg::Sysarg1) as i32,
+                    ) != tracee.auxv_fd_identity
                 {
                     Flow::End
                 } else {
@@ -327,18 +340,14 @@ pub fn translate_syscall_exit(tracee: &mut Tracee) {
             // Record fds created for the AF_NETLINK emulation.
             if tracee.pending_fake_netlink_socket {
                 let fd = peek_reg(tracee, RegVersion::Current, Reg::SysargResult) as i32;
-                if fd >= 0
-                    && tracee.fake_netlink_fds.len() < crate::tracee::MAX_FAKE_NETLINK_FDS
-                    && !tracee.fake_netlink_fds.iter().any(|s| s.fd == fd)
-                {
+                if fd >= 0 {
                     netlink::mark_fake_netlink_fd(tracee, fd);
                 }
                 tracee.pending_fake_netlink_socket = false;
             }
             if tracee.pending_real_netlink_socket {
                 let fd = peek_reg(tracee, RegVersion::Current, Reg::SysargResult) as i32;
-                if fd >= 0 && tracee.netlink_route_fds.len() < crate::tracee::MAX_NETLINK_ROUTE_FDS
-                {
+                if fd >= 0 {
                     netlink::mark_netlink_route_fd(tracee, fd);
                 }
                 tracee.pending_real_netlink_socket = false;

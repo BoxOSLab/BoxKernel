@@ -8,6 +8,17 @@ use crate::tracee::Tracee;
 static F2FS_STATE: AtomicU8 = AtomicU8::new(0);
 
 fn probe_f2fs_bug(tracee: &Tracee) -> bool {
+    // The old probe created files and forked on every filesystem. Avoid
+    // that startup work (and needless writable-temp requirements) unless
+    // the temporary directory is actually on F2FS.
+    let Ok(path) = std::ffi::CString::new(crate::path::temp::get_temp_directory()) else {
+        return false;
+    };
+    if crate::sys::statfs64(&path).is_ok_and(|stat| stat.f_type != 0xf2f5_2010)
+        || crate::sys::access(&path, libc::W_OK) < 0
+    {
+        return false;
+    }
     crate::verbose!(Some(tracee), 6, "Checking for f2fs case sensitivity bug");
     let dir = match crate::path::temp::create_temp_directory(None, "proot_f2fsbug") {
         Some(d) => d,

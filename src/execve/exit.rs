@@ -30,7 +30,7 @@ const LOAD_ACTION_START: u64 = 6;
 
 /// `fill_file_with_auxv()` — serialize `vectors` to `path` at the ptracee's
 /// word size.
-fn fill_file_with_auxv(ptracee: &Tracee, path: &str, vectors: &[ElfAuxVector]) -> i32 {
+pub(crate) fn fill_file_with_auxv(ptracee: &Tracee, path: &str, vectors: &[ElfAuxVector]) -> i32 {
     let w = sizeof_word(ptracee);
     let mut buf = Vec::with_capacity(vectors.len() * 2 * w);
     for v in vectors {
@@ -102,6 +102,12 @@ fn transfer_load_script(tracee: &mut Tracee) -> i32 {
     let stack_pointer = peek_reg(tracee, RegVersion::Current, Reg::StackPointer);
     let w = sizeof_word(tracee) as Word;
     let page_mask = !(crate::sys::page_size() - 1);
+
+    // The custom loader fixes the auxv in place before entering the guest.
+    // Save only the stack address now; defer reading it and writing a file
+    // until a guest actually opens /proc/self/auxv.
+    tracee.auxv_stack_pointer = stack_pointer;
+    tracee.auxv_file = None;
 
     // argv[0]'s address on the initial stack — the true AT_EXECFN.
     tracee.execfn_addr = peek_word(tracee, stack_pointer + w);
@@ -220,10 +226,26 @@ fn transfer_load_script(tracee: &mut Tracee) -> i32 {
 /// `translate_execve_exit()`.
 pub fn translate_execve_exit(tracee: &mut Tracee) {
     tracee.auxv_fd = -1;
+    tracee.auxv_fd_identity = None;
 
     if tracee.skip_proot_loader {
+        if (peek_reg(tracee, RegVersion::Current, Reg::SysargResult) as i64) < 0 {
+            return;
+        }
         tracee.restore_original_regs = false;
         tracee.seen_execve = true;
+        tracee.execfn_addr = 0;
+        tracee.auxv_stack_pointer = 0;
+        tracee.auxv_file = None;
+        if let Some(new_exe) = tracee.new_exe.take() {
+            tracee.exe = Some(Rc::from(new_exe));
+        }
+        // exec unshares VM state. Updating the old shared heap at enter
+        // would also change a vfork parent's heap, even on failed exec.
+        tracee.heap = Rc::new(std::cell::RefCell::new(crate::syscall::heap::Heap {
+            disabled: true,
+            ..Default::default()
+        }));
         return;
     }
 
@@ -297,6 +319,42 @@ pub fn translate_execve_exit(tracee: &mut Tracee) {
 mod tests {
     use super::*;
     use crate::execve::Mapping;
+
+    #[test]
+    fn native_exec_unshares_heap_and_updates_executable() {
+        let mut tracee = Tracee {
+            skip_proot_loader: true,
+            new_exe: Some("/bin/new-program".to_owned()),
+            execfn_addr: 0x1234,
+            ..Default::default()
+        };
+        let parent_heap = tracee.heap.clone();
+        translate_execve_exit(&mut tracee);
+        assert!(tracee.heap.borrow().disabled);
+        assert!(!parent_heap.borrow().disabled);
+        assert!(!Rc::ptr_eq(&tracee.heap, &parent_heap));
+        assert_eq!(tracee.exe.as_deref(), Some("/bin/new-program"));
+        assert_eq!(tracee.execfn_addr, 0);
+    }
+
+    #[test]
+    fn failed_native_exec_preserves_heap() {
+        let mut tracee = Tracee {
+            skip_proot_loader: true,
+            execfn_addr: 0x1234,
+            ..Default::default()
+        };
+        let heap = tracee.heap.clone();
+        crate::tracee::reg::poke_reg(
+            &mut tracee,
+            Reg::SysargResult,
+            (-libc::ENOENT as i64) as Word,
+        );
+        translate_execve_exit(&mut tracee);
+        assert!(Rc::ptr_eq(&tracee.heap, &heap));
+        assert!(!tracee.heap.borrow().disabled);
+        assert_eq!(tracee.execfn_addr, 0x1234);
+    }
 
     #[test]
     fn transcript_mappings_serializes_six_words_each() {

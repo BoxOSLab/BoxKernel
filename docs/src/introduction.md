@@ -37,11 +37,11 @@ user space on the host.
 | Global state | `static` variables, `static mut`-style | atomics + `thread_local!` only |
 | Extensions | `(callback, config, sysnums)` triples, untyped payloads | `AnyExtension` enum + typed `Event` variants |
 | Syscall table | generated `sysnums.h` | generated `sysnum.rs` via `build.rs` + `data/sysnums-*.txt` |
-| Test contract | `tests/` suite | the *same* suite — **113 checks green** |
+| Tests | C integration suite | Rust unit/integration tests plus C compatibility coverage |
 
 The binary produced by this crate is named `proot` so existing
-consumers (e.g. `proot-distro` scripts) can use it as a drop-in
-replacement.
+consumers (e.g. `proot-distro` scripts) can use familiar command lines.
+See [Compatibility](compatibility.md) for intentional behavior changes.
 
 ## Feature checklist
 
@@ -64,8 +64,8 @@ replacement.
   [command-line reference](options.md) at hand.
 - **Hacking on it?** [Architecture](architecture.md) is the map;
   [Development guide](development.md) covers the toolchain and the
-  unsafe/parity rules; [Testing](testing.md) shows how the C suite is
-  the behavioral contract.
+  unsafe policy and behavior changes; [Testing](testing.md) covers
+  Rust tests and the C compatibility suite.
 - **Evaluating it?** [Security model](security.md) explains what it
   does *not* do, and [Compatibility](compatibility.md) lists every
   known deviation from C PRoot.

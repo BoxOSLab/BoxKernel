@@ -100,9 +100,35 @@ pub enum Sigstop {
 /// cross-references stay cheap keys rather than borrowed pointers.
 pub type TraceeId = usize;
 
+/// Kernel object behind a descriptor. Unlike its number, this survives dup()
+/// and cannot accidentally identify a different file after close()/dup2().
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct FdIdentity {
+    device: u64,
+    inode: u64,
+}
+
+impl FdIdentity {
+    pub fn read(pid: i32, fd: i32) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = std::fs::metadata(format!("/proc/{pid}/fd/{fd}")).ok()?;
+        Some(Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct TrackedFd {
+    pub fd: i32,
+    pub identity: FdIdentity,
+}
+
 #[derive(Default)]
 pub struct FakeNetlinkSocket {
     pub fd: i32,
+    pub identity: FdIdentity,
     pub reply: Vec<u8>,
     pub reply_off: usize,
 }
@@ -127,10 +153,11 @@ pub struct Tracee {
 
     pub fake_netlink_fds: Vec<FakeNetlinkSocket>,
     pub pending_fake_netlink_socket: bool,
-    pub netlink_route_fds: Vec<i32>,
+    pub netlink_route_fds: Vec<TrackedFd>,
     pub pending_real_netlink_socket: bool,
     pub netlink_ack_pending: bool,
     pub netlink_ack_fd: i32,
+    pub netlink_ack_identity: Option<FdIdentity>,
     pub netlink_ack_seq: u32,
 
     pub as_ptracer: AsPtracer,
@@ -171,6 +198,11 @@ pub struct Tracee {
 
     /// fd the tracee used to open /proc/self/auxv (-1 = inactive).
     pub auxv_fd: i32,
+    pub auxv_fd_identity: Option<FdIdentity>,
+    /// Initial stack retained for lazy snapshots after the custom loader
+    /// has fixed its auxiliary vectors in place.
+    pub auxv_stack_pointer: Word,
+    pub auxv_file: Option<Rc<str>>,
 
     /// The last path argument the sysenter stage of the current syscall
     /// translated, so its sysexit stage needn't read it back from tracee
@@ -261,6 +293,7 @@ impl Default for Tracee {
             pending_real_netlink_socket: false,
             netlink_ack_pending: false,
             netlink_ack_fd: -1,
+            netlink_ack_identity: None,
             netlink_ack_seq: 0,
             as_ptracer: AsPtracer::default(),
             as_ptracee: AsPtracee::default(),
@@ -282,6 +315,9 @@ impl Default for Tracee {
             load_info: None,
             execfn_addr: 0,
             auxv_fd: -1,
+            auxv_fd_identity: None,
+            auxv_stack_pointer: 0,
+            auxv_file: None,
             enter_path: None,
             verbose: 0,
             seccomp: Seccomp::Disabled,

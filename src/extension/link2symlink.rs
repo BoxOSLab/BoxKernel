@@ -1192,6 +1192,7 @@ impl Link2symlink {
             (Sysnum::newfstatat, FILTER_SYSEXIT),
             (Sysnum::stat, FILTER_SYSEXIT),
             (Sysnum::stat64, FILTER_SYSEXIT),
+            (Sysnum::statx, FILTER_SYSEXIT),
             (Sysnum::rename, FILTER_SYSEXIT),
             (Sysnum::renameat, FILTER_SYSEXIT),
             (Sysnum::renameat2, FILTER_SYSEXIT),

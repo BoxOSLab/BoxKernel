@@ -102,6 +102,25 @@ pub fn translate_syscall_fetched(tracee: &mut Tracee) {
     let is_enter_stage = is_in_sysenter(tracee);
     debug_assert!(tracee.exe.is_some());
 
+    let cache_mutation = crate::path::cache::enabled()
+        && crate::path::cache::may_change_directories(get_sysnum(
+            tracee,
+            if is_enter_stage {
+                RegVersion::Current
+            } else {
+                RegVersion::Original
+            },
+        ));
+    if cache_mutation {
+        // Entry clears earlier observations; exit clears anything another
+        // tracee observed while the mutation was still in flight.
+        crate::path::cache::invalidate();
+        if is_enter_stage {
+            tracee.sysexit_pending = true;
+            tracee.restart_how = crate::ptrace::ptc::PTRACE_SYSCALL;
+        }
+    }
+
     let mut suppressed_syscall_status = 0;
 
     if is_enter_stage {
@@ -219,6 +238,19 @@ pub fn translate_syscall_fetched(tracee: &mut Tracee) {
         crate::tracee::reg::print_current_regs(tracee, 5, "sysenter end");
     } else {
         crate::tracee::reg::print_current_regs(tracee, 4, "sysexit end");
+    }
+    if !is_enter_stage
+        && tracee.skip_proot_loader
+        && matches!(
+            get_sysnum(tracee, RegVersion::Original),
+            Sysnum::execve | Sysnum::execveat
+        )
+        && (peek_reg(tracee, RegVersion::Current, Reg::SysargResult) as i64) >= 0
+    {
+        // Refresh ABI only after exit callbacks consumed the old syscall.
+        // The next seccomp stop decodes its flags before taking a fresh
+        // ORIGINAL snapshot, so it must already see the new executable ABI.
+        save_current_regs(tracee, RegVersion::Original);
     }
 }
 

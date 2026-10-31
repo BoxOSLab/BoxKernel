@@ -92,3 +92,16 @@ fn rootfs_file_not_dir_fails() {
     );
     assert!(!out.status.success());
 }
+
+#[test]
+fn directory_cache_observes_guest_replacements() {
+    let f = rootfs("r-cache-replace");
+    f.file("directory/file", "old\n");
+    f.file("target/file", "new\n");
+    let out = run_rooted_ok(
+        &f,
+        &[],
+        "set -e; cat /directory/file; mv /directory /moved; ln -s /target /directory; cat /directory/file; rm /directory; mkdir /directory; echo recreated > /directory/file; cat /directory/file",
+    );
+    assert_eq!(stdout(&out), "old\nnew\nrecreated\n");
+}

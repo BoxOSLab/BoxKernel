@@ -44,6 +44,23 @@ re-implements ([Termux PRoot 5.1.0](https://github.com/termux/proot)).
 
 ### Changed
 
+- Prioritize measured performance and documented behavior over exact C
+  PRoot parity; retain the reference suite as compatibility evidence.
+- Cache intermediate directory metadata for at most 100 ms; invalidate
+  on intercepted guest mutations. `BOXKERNEL_NO_PATH_CACHE` disables it.
+- Use native ELF loading and ASLR in identity filesystem namespaces;
+  `BOXKERNEL_LEGACY_LOADER` requests the historical custom loader.
+- Keep original absolute path pointers for eligible native host images,
+  avoiding canonicalization and remote path copies;
+  `BOXKERNEL_NO_NATIVE_PATHS` restores translation.
+- Skip the file-creation/fork probe for the F2FS workaround on other
+  filesystems, allowing native commands to start without writable
+  temporary storage.
+- Leave `stat`, `lstat`, `newfstatat` and `statx` untraced in an identity
+  filesystem unless an extension rewrites their results.
+- Let normal `close()` calls run untraced. Auxv/netlink tracking validates
+  descriptor identities on use; pipe-reader shadowing is now opt-in with
+  `BOXKERNEL_PIPE_SHADOW=1`, restoring normal SIGPIPE/EPIPE by default.
 - Reduce tracer syscalls by reusing path metadata and enter-stage path
   translations, batching ELF and regular-file shebang reads, pooling boxed
   path buffers, and batching fake ownership updates.

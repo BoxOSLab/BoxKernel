@@ -1,10 +1,11 @@
 # Contributing to BoxKernel
 
 Thanks for your interest in contributing! BoxKernel is a clean-room
-Rust re-implementation of [Termux PRoot 5.1.0](https://github.com/termux/proot)
-whose overriding constraint is **behavioral parity with the C
-reference**. Every contribution is judged against that constraint first,
-idiomaticity second.
+Rust implementation of the user-space rootfs and syscall translation
+features of [Termux PRoot](https://github.com/termux/proot). BoxKernel
+prioritizes correctness, memory safety and measured performance.
+Intentional differences from C PRoot are supported when they are tested
+and documented.
 
 ## Development setup
 
@@ -23,25 +24,25 @@ $ cargo build --release  # release build
 $ cargo test             # unit tests
 ```
 
-## The parity rule
+## Behavior and performance changes
 
 `src/` files carry comments naming the C function each one ports
 (e.g. `// port of translate_sysenter_end()`). When fixing a bug:
 
 1. **Reproduce first** — write a shell/C reproducer, or better, run the
    relevant test from the upstream suite (see below).
-2. Check the C reference for the intended semantics — the comment above
-   each function names its C counterpart.
-3. Keep C-identical error paths: return `-errno` from the *innermost*
-   failing operation, preserve `errno` conventions (`sys::clear_errno`
-   before calls whose success is measured through `errno == 0`), and
-   keep C's verdicts for edge cases even when they look odd — they are
-   usually load-bearing.
-4. Fix the Rust code; re-run the reproducer and the suite.
+2. Consult the C reference to understand existing behavior. It is a
+   reference implementation, rather than a requirement for identical
+   outputs, internal design or edge cases.
+3. Preserve kernel FFI contracts and memory safety. Document deliberate
+   changes to guest-visible behavior, including cache freshness, process
+   layout or compatibility workarounds; add focused regression tests.
+4. Re-run the reproducer and Rust suite. Performance changes need a
+   repeatable before/after measurement and must state their tradeoffs.
 
 ## Running the reference test suite
 
-The C implementation's integration suite is the behavioral contract.
+The C implementation's integration suite provides compatibility coverage.
 To run it against the Rust binary:
 
 ```console
@@ -50,10 +51,11 @@ $ make -C . check PROOT=/path/to/BoxKernel/target/release/proot
 ```
 
 Record the reference commit (`git rev-parse HEAD`) with the result:
-test counts change as upstream adds coverage. The target is **0 failed**;
-optional tools may cause skips. A change is not done until this suite is
-green. Current compatibility gaps and the performance baseline comparison
-are recorded in [the performance report](docs/src/performance.md#validation).
+test counts change as upstream adds coverage. Compare failures with the
+baseline and distinguish intentional differences from accidental bugs.
+Reference-suite parity is not a release gate; the Rust tests and the
+quality gates below must pass. Current compatibility gaps and benchmark
+results are recorded in [the performance report](docs/src/performance.md).
 
 ## Code quality gates
 
@@ -109,9 +111,8 @@ Rules for new code:
 
 - Bugs: use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.yml)
   and include `proot -v 9 …` output where relevant.
-- Features: open a feature request describing the C-PRoot behavior or
-  the new capability; parity-affecting changes need a corresponding
-  C-test-suite story.
+- Features: describe the intended behavior, performance evidence where
+  relevant, and any differences from C PRoot.
 
 ## Code of conduct
 

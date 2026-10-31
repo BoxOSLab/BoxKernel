@@ -36,8 +36,9 @@ $ cargo install --path .          # installs `proot` into ~/.cargo/bin
 $ install -Dm755 target/release/proot ~/.local/bin/proot
 ```
 
-The binary is deliberately named `proot` — it is a drop-in replacement
-for the C implementation. If you already have C `proot` installed, pick
+The binary is named `proot` for familiar command-line usage. See
+[Compatibility](compatibility.md) for behavior differences. If you
+already have C `proot` installed, pick
 a different destination or rename (e.g. `proot-rs`).
 
 ## Installing the manual page

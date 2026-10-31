@@ -70,7 +70,18 @@ fn translate_path2_into(
         new_path.set(b"");
         return 0;
     }
-    let is_link = match crate::path::translate_path_ext(
+    if crate::path::can_use_native_path(tracee, path.as_bytes()) {
+        new_path.set(path.as_bytes());
+        let mut host_path = PathGuard::new();
+        host_path.set(path.as_bytes());
+        tracee.enter_path = Some(crate::tracee::EnterPath {
+            addr: peek_reg(tracee, RegVersion::Current, reg),
+            host_path,
+            is_link: None,
+        });
+        return 0;
+    }
+    let mut is_link = match crate::path::translate_path_ext(
         tracee,
         new_path,
         dir_fd,
@@ -80,6 +91,36 @@ fn translate_path2_into(
         Err(e) => return e,
         Ok(l) => l,
     };
+    if tracee.execfn_addr != 0
+        && tracee.auxv_stack_pointer != 0
+        && new_path.as_bytes().ends_with(b"/auxv")
+        && new_path.as_bytes() == format!("/proc/{}/auxv", tracee.pid).as_bytes()
+        && matches!(
+            get_sysnum(tracee, RegVersion::Original),
+            Sysnum::open | Sysnum::openat | Sysnum::openat2
+        )
+    {
+        let flags = peek_reg(
+            tracee,
+            RegVersion::Current,
+            if get_sysnum(tracee, RegVersion::Original) == Sysnum::open {
+                Reg::Sysarg2
+            } else {
+                Reg::Sysarg3
+            },
+        );
+        if flags & (libc::O_ACCMODE | libc::O_CREAT | libc::O_TRUNC) as Word
+            == libc::O_RDONLY as Word
+        {
+            match crate::execve::auxv::snapshot_file(tracee) {
+                Ok(path) => {
+                    new_path.set(path.as_bytes());
+                    is_link = Some(false);
+                }
+                Err(error) => return error,
+            }
+        }
+    }
     let status = set_sysarg_path(tracee, new_path.as_bytes(), reg);
     if status >= 0 {
         let mut host_path = PathGuard::new();
@@ -1168,12 +1209,11 @@ pub fn translate_syscall_enter(tracee: &mut Tracee) -> i32 {
         }
         Sysnum::close => {
             let closed_fd = peek_reg(tracee, RegVersion::Current, Reg::Sysarg1) as i32;
-            if tracee.auxv_fd >= 0 && closed_fd == tracee.auxv_fd {
-                tracee.auxv_fd = -1;
+            // Descriptor emulation validates kernel identities lazily, so
+            // close need only stop for the optional pipe grace period.
+            if crate::syscall::pipe_shadow::enabled() {
+                crate::syscall::pipe_shadow::shadow_pipe_read_end(tracee.pid, closed_fd);
             }
-            netlink::unmark_fake_netlink_fd(tracee, closed_fd);
-            netlink::unmark_netlink_route_fd(tracee, closed_fd);
-            crate::syscall::pipe_shadow::shadow_pipe_read_end(tracee.pid, closed_fd);
             status = 0;
         }
         _ => {
@@ -1372,6 +1412,40 @@ mod tests {
         let mut expected = f.abs(".");
         expected.extend_from_slice(b"/inside.txt");
         assert_eq!(remote_str(&t, dst), expected);
+    }
+
+    #[test]
+    fn native_absolute_path_keeps_remote_pointer_and_stack() {
+        if std::env::var_os("BOXKERNEL_NO_NATIVE_PATHS").is_some() {
+            return;
+        }
+        let arena = Arena::new(2);
+        let child = fork_child(&arena).unwrap();
+        let mut t = rooted_tracee(b"/", &arena, &child);
+        t.heap.borrow_mut().disabled = true;
+        let original = b"/host/kernel/path";
+        let src = arena.addr() + 0x100;
+        write_data(&t, src, b"/host/kernel/path\0");
+        poke_reg(&mut t, Reg::Sysarg1, src);
+        let stack = peek_reg(&t, RegVersion::Current, Reg::StackPointer);
+        let contents = arena.local().to_vec();
+        let mut output = FixedPath::new();
+        assert_eq!(
+            translate_path2_into(
+                &mut t,
+                libc::AT_FDCWD,
+                &FixedPath::from_bytes(original),
+                Reg::Sysarg1,
+                PType::Regular,
+                &mut output
+            ),
+            0
+        );
+        assert_eq!(peek_reg(&t, RegVersion::Current, Reg::Sysarg1), src);
+        assert_eq!(peek_reg(&t, RegVersion::Current, Reg::StackPointer), stack);
+        assert_eq!(arena.local(), contents.as_slice());
+        assert_eq!(output.as_bytes(), original);
+        assert_eq!(t.enter_path.as_ref().unwrap().addr, src);
     }
 
     #[test]

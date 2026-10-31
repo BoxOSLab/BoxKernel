@@ -117,10 +117,6 @@ static PROOT_SYSNUMS: &[FilteredSysnum] = &[
         flags: 0,
     },
     FilteredSysnum {
-        value: Sysnum::close,
-        flags: 0,
-    },
-    FilteredSysnum {
         value: Sysnum::connect,
         flags: 0,
     },
@@ -871,12 +867,63 @@ fn set_seccomp_filters(sysnums: &[FilteredSysnum], arg_filters: &[&'static ArgFi
     0
 }
 
-/// `enable_syscall_filtering()` — merge PRoot's sysnums with the ones the
-/// tracee's extensions need, then install the filter (called in the child
-/// before exec).
-pub fn enable_syscall_filtering(tracee: &crate::tracee::Tracee) -> i32 {
+/// Path-stat calls the kernel can answer unchanged in an identity namespace.
+/// Extensions that rewrite the result list the same numbers and put them
+/// back; `statx` is included because fake identity and link2symlink patch
+/// its buffer without a separate path translation.
+const IDENTITY_KERNEL_STATS: &[Sysnum] = &[
+    Sysnum::fstatat64,
+    Sysnum::lstat,
+    Sysnum::lstat64,
+    Sysnum::newfstatat,
+    Sysnum::oldlstat,
+    Sysnum::oldstat,
+    Sysnum::stat,
+    Sysnum::stat64,
+    Sysnum::statx,
+];
+
+/// Whether stat-family calls can skip the tracer. The filter is installed
+/// once and inherited, so this must stay true for every later image in the
+/// session, including scripts that still use the custom loader.
+fn leave_stat_to_kernel(tracee: &crate::tracee::Tracee) -> bool {
+    if std::env::var_os("BOXKERNEL_NO_NATIVE_PATHS").is_some()
+        || std::env::var_os("BOXKERNEL_LEGACY_LOADER").is_some()
+        || std::env::var_os("PROOT_LOADER").is_some()
+    {
+        return false;
+    }
+    if tracee.qemu.is_some()
+        || tracee.glue_type != 0
+        || tracee.glue.is_some()
+        || tracee.reconf_tracee.is_some()
+    {
+        return false;
+    }
+    let fs = tracee.fs.borrow();
+    fs.pending.is_empty()
+        && !fs.guest.is_empty()
+        && fs
+            .guest
+            .iter()
+            .all(|binding| binding.host.as_bytes() == binding.guest.as_bytes())
+}
+
+fn traced_sysnums(tracee: &crate::tracee::Tracee) -> Vec<FilteredSysnum> {
     let mut filtered = Vec::new();
     merge_filtered_sysnums(&mut filtered, PROOT_SYSNUMS);
+    if leave_stat_to_kernel(tracee) {
+        filtered.retain(|entry| !IDENTITY_KERNEL_STATS.contains(&entry.value));
+    }
+    if crate::syscall::pipe_shadow::enabled() {
+        merge_filtered_sysnums(
+            &mut filtered,
+            &[FilteredSysnum {
+                value: Sysnum::close,
+                flags: 0,
+            }],
+        );
+    }
     for ext in tracee.extensions.iter().flatten() {
         let tmp: Vec<FilteredSysnum> = ext
             .filtered_sysnums()
@@ -885,6 +932,14 @@ pub fn enable_syscall_filtering(tracee: &crate::tracee::Tracee) -> i32 {
             .collect();
         merge_filtered_sysnums(&mut filtered, &tmp);
     }
+    filtered
+}
+
+/// `enable_syscall_filtering()` — merge PRoot's sysnums with the ones the
+/// tracee's extensions need, then install the filter (called in the child
+/// before exec).
+pub fn enable_syscall_filtering(tracee: &crate::tracee::Tracee) -> i32 {
+    let filtered = traced_sysnums(tracee);
     // An extension that wants a syscall may want every call of it.
     let arg_filters: Vec<&'static ArgFilter> = ARG_FILTERS
         .iter()
@@ -929,6 +984,40 @@ mod tests {
         let j = jump(BPF_JMP, 7, 1, 2);
         assert_eq!((j.code, j.jt, j.jf, j.k), (BPF_JMP, 1, 2, 7));
         assert_eq!(size_of::<SockFilter>(), 8);
+    }
+
+    #[test]
+    fn identity_namespace_leaves_stat_to_the_kernel() {
+        let _guard = crate::testutil::env_lock();
+        crate::testutil::with_env("BOXKERNEL_NO_NATIVE_PATHS", None::<&str>, || {
+            crate::testutil::with_env("BOXKERNEL_LEGACY_LOADER", None::<&str>, || {
+                crate::testutil::with_env("PROOT_LOADER", None::<&str>, || {
+                    let tracee = crate::testutil::test_tracee("/", &[]);
+                    let listed = traced_sysnums(&tracee);
+                    assert!(
+                        listed
+                            .iter()
+                            .all(|entry| !IDENTITY_KERNEL_STATS.contains(&entry.value))
+                    );
+
+                    let root = crate::testutil::TempDir::new("stat-filter");
+                    let rooted = crate::testutil::test_tracee(root.path().to_str().unwrap(), &[]);
+                    assert!(
+                        traced_sysnums(&rooted)
+                            .iter()
+                            .any(|entry| entry.value == Sysnum::newfstatat)
+                    );
+
+                    let mut fake = crate::testutil::test_tracee("/", &[]);
+                    fake.extensions
+                        .push(Some(AnyExtension::FakeId0(Default::default())));
+                    let statx = traced_sysnums(&fake)
+                        .into_iter()
+                        .find(|entry| entry.value == Sysnum::statx);
+                    assert_eq!(statx.map(|entry| entry.flags), Some(FILTER_SYSEXIT));
+                });
+            });
+        });
     }
 
     #[test]
@@ -1324,6 +1413,31 @@ mod tests {
                     "{:#x} nr {nr}",
                     arch.value
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn ordinary_close_is_not_traced() {
+        let ordinary = build_filter(PROOT_SYSNUMS);
+        let mut shadow = PROOT_SYSNUMS.to_vec();
+        merge_filtered_sysnums(
+            &mut shadow,
+            &[FilteredSysnum {
+                value: Sysnum::close,
+                flags: 0,
+            }],
+        );
+        let shadow = build_filter(&shadow);
+        validate(&ordinary);
+        validate(&shadow);
+        for arch in crate::arch::SECCOMP_ARCHS {
+            for abi in arch.abis {
+                let nr = detranslate_sysnum(*abi, Sysnum::close);
+                if nr != SYSCALL_AVOIDER {
+                    assert_eq!(run(&ordinary, arch.value, nr as u32), SECCOMP_RET_ALLOW);
+                    assert_eq!(run(&shadow, arch.value, nr as u32), SECCOMP_RET_TRACE);
+                }
             }
         }
     }

@@ -1,4 +1,7 @@
-//! Shadow pipe read ends — port of syscall/pipe_shadow.c.
+//! Optional shadow pipe read ends — port of syscall/pipe_shadow.c.
+//!
+//! Disabled by default: native SIGPIPE/EPIPE behavior needs no close trap.
+//! Set BOXKERNEL_PIPE_SHADOW=1 to restore the legacy grace period.
 //!
 //! When a tracee closes the read end of an anonymous pipe while a child
 //! still holds the write end, ptrace serialization can make the parent
@@ -43,6 +46,12 @@ thread_local! {
         })
     };
     static TIMER_ARMED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether the legacy pipe-close grace period was explicitly requested.
+pub fn enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("BOXKERNEL_PIPE_SHADOW").is_some_and(|v| v == "1"))
 }
 
 fn elapsed_ms(since: &libc::timespec) -> i64 {

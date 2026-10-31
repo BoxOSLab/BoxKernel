@@ -2375,8 +2375,9 @@ fn handle_sysexit_start(tracee: &mut Tracee, config: &mut Config) -> i32 {
         return 0;
     }
 
-    // Before PRoot pushes the load script onto the stack.
-    if !tracee.skip_proot_loader {
+    // Both the custom loader and native ld.so consume the initial stack.
+    // QEMU constructs its guest's auxv separately from its own host stack.
+    if !tracee.skip_proot_loader || tracee.qemu.is_none() {
         adjust_elf_auxv(tracee, config);
     }
 
@@ -2645,6 +2646,7 @@ static FILTERED_SYSNUMS: &[(Sysnum, Word)] = &[
     (Sysnum::fsetxattr, FSE),
     (Sysnum::stat, FSE),
     (Sysnum::stat64, FSE),
+    (Sysnum::statx, FSE),
     (Sysnum::statfs, FSE),
     (Sysnum::statfs64, FSE),
     (Sysnum::sendmsg, 0),

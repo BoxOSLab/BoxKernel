@@ -25,11 +25,11 @@ pub fn run(args: &[&str], env: &[(&str, &str)]) -> Output {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Keep the default reproducible while allowing an explicit override.
+    cmd.env("PROOT_TMP_DIR", std::env::temp_dir());
     for (k, v) in env {
         cmd.env(k, v);
     }
-    // Keep the test env minimal and reproducible.
-    cmd.env("PROOT_TMP_DIR", std::env::temp_dir());
     wait_with_output(&mut cmd, args)
 }
 

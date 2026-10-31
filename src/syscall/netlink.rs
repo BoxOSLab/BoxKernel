@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use crate::Word;
 use crate::tracee::mem::{peek_word, read_data, write_data};
 use crate::tracee::reg::{Reg, RegVersion, peek_reg};
-use crate::tracee::{FakeNetlinkSocket, MAX_FAKE_NETLINK_REPLY, Tracee};
+use crate::tracee::{FakeNetlinkSocket, FdIdentity, MAX_FAKE_NETLINK_REPLY, Tracee, TrackedFd};
 
 // rtnetlink/netlink constants (ABI-stable).
 const NLMSG_HDR_LEN: usize = 16;
@@ -76,10 +76,14 @@ fn rta_space(payload: usize) -> usize {
 
 /// `fake_netlink_socket()` — index of the bookkeeping entry for @fd.
 pub fn fake_netlink_idx(tracee: &Tracee, fd: i32) -> Option<usize> {
-    if fd < 0 {
+    if fd < 0 || tracee.fake_netlink_fds.is_empty() {
         return None;
     }
-    tracee.fake_netlink_fds.iter().position(|s| s.fd == fd)
+    let identity = FdIdentity::read(tracee.pid, fd)?;
+    tracee
+        .fake_netlink_fds
+        .iter()
+        .position(|s| s.identity == identity)
 }
 
 pub fn is_fake_netlink_fd(tracee: &Tracee, fd: i32) -> bool {
@@ -94,15 +98,24 @@ pub fn unmark_fake_netlink_fd(tracee: &mut Tracee, fd: i32) {
 }
 
 pub fn is_netlink_route_fd(tracee: &Tracee, fd: i32) -> bool {
-    fd >= 0 && tracee.netlink_route_fds.contains(&fd)
+    fd >= 0
+        && !tracee.netlink_route_fds.is_empty()
+        && FdIdentity::read(tracee.pid, fd).is_some_and(|identity| {
+            tracee
+                .netlink_route_fds
+                .iter()
+                .any(|s| s.identity == identity)
+        })
 }
 
 pub fn unmark_netlink_route_fd(tracee: &mut Tracee, fd: i32) {
-    if let Some(i) = tracee.netlink_route_fds.iter().position(|&f| f == fd) {
-        tracee.netlink_route_fds.remove(i);
-    }
-    if tracee.netlink_ack_pending && tracee.netlink_ack_fd == fd {
+    let identity = FdIdentity::read(tracee.pid, fd);
+    tracee
+        .netlink_route_fds
+        .retain(|s| Some(s.identity) != identity);
+    if tracee.netlink_ack_pending && tracee.netlink_ack_identity == identity {
         tracee.netlink_ack_pending = false;
+        tracee.netlink_ack_identity = None;
     }
 }
 
@@ -1114,12 +1127,21 @@ pub fn note_netns_netlink_request(tracee: &mut Tracee, fd: i32, buf_addr: Word, 
     }
     tracee.netlink_ack_pending = true;
     tracee.netlink_ack_fd = fd;
+    tracee.netlink_ack_identity = FdIdentity::read(tracee.pid, fd);
     tracee.netlink_ack_seq = u32::from_ne_bytes(hdr[8..12].try_into().unwrap());
+}
+
+/// A close/dup2/close_range may have replaced the number since the request.
+/// Duplicates of the original socket still share its pending reply.
+fn is_pending_ack_fd(tracee: &Tracee, fd: i32) -> bool {
+    tracee.netlink_ack_pending
+        && tracee.netlink_ack_identity.is_some()
+        && FdIdentity::read(tracee.pid, fd) == tracee.netlink_ack_identity
 }
 
 /// `note_netns_netlink_reply()`.
 pub fn note_netns_netlink_reply(tracee: &mut Tracee, fd: i32) {
-    if !tracee.netlink_ack_pending || tracee.netlink_ack_fd != fd {
+    if !is_pending_ack_fd(tracee, fd) {
         return;
     }
     tracee.sysexit_pending = true;
@@ -1129,10 +1151,10 @@ pub fn note_netns_netlink_reply(tracee: &mut Tracee, fd: i32) {
 /// `handle_netlink_reply_exit()` — at the exit of recvfrom/recvmsg, turn
 /// the kernel's EPERM/EACCES NLMSG_ERROR into an ack for the noted request.
 pub fn handle_netlink_reply_exit(tracee: &mut Tracee, is_recvfrom: bool) {
-    if !tracee.netlink_ack_pending {
-        return;
-    }
-    if peek_reg(tracee, RegVersion::Original, Reg::Sysarg1) as i32 != tracee.netlink_ack_fd {
+    if !is_pending_ack_fd(
+        tracee,
+        peek_reg(tracee, RegVersion::Original, Reg::Sysarg1) as i32,
+    ) {
         return;
     }
     let result = peek_reg(tracee, RegVersion::Current, Reg::SysargResult) as i64;
@@ -1238,17 +1260,71 @@ pub fn maybe_fake_siocgifindex(tracee: &Tracee, cmd: Word, arg: Word) -> bool {
     write_data(tracee, arg + IFNAMSIZ as Word, &ifindex.to_ne_bytes()) >= 0
 }
 
+/// Find live descriptor identities only when an emulation table fills.
+/// Keeping state by identity also covers dup()/dup2()/close_range() without
+/// trapping those calls: ordinary file closes never involve the tracer.
+fn prune_closed_sockets(tracee: &mut Tracee) {
+    let Ok(fds) = std::fs::read_dir(format!("/proc/{}/fd", tracee.pid)) else {
+        return;
+    };
+    let live: Vec<FdIdentity> = fds
+        .filter_map(|entry| {
+            let fd = entry.ok()?.file_name().to_str()?.parse().ok()?;
+            FdIdentity::read(tracee.pid, fd)
+        })
+        .collect();
+    tracee
+        .fake_netlink_fds
+        .retain(|s| live.contains(&s.identity));
+    tracee
+        .netlink_route_fds
+        .retain(|s| live.contains(&s.identity));
+    if tracee
+        .netlink_ack_identity
+        .is_some_and(|identity| !live.contains(&identity))
+    {
+        tracee.netlink_ack_pending = false;
+        tracee.netlink_ack_identity = None;
+    }
+}
+
 pub fn mark_fake_netlink_fd(tracee: &mut Tracee, fd: i32) {
+    let Some(identity) = FdIdentity::read(tracee.pid, fd) else {
+        return;
+    };
+    if tracee.fake_netlink_fds.len() >= crate::tracee::MAX_FAKE_NETLINK_FDS {
+        prune_closed_sockets(tracee);
+    }
+    if tracee.fake_netlink_fds.len() >= crate::tracee::MAX_FAKE_NETLINK_FDS
+        || tracee
+            .fake_netlink_fds
+            .iter()
+            .any(|s| s.identity == identity)
+    {
+        return;
+    }
     tracee.fake_netlink_fds.push(FakeNetlinkSocket {
         fd,
+        identity,
         reply: Vec::new(),
         reply_off: 0,
     });
 }
 
 pub fn mark_netlink_route_fd(tracee: &mut Tracee, fd: i32) {
-    if fd >= 0 && !tracee.netlink_route_fds.contains(&fd) {
-        tracee.netlink_route_fds.push(fd);
+    let Some(identity) = FdIdentity::read(tracee.pid, fd) else {
+        return;
+    };
+    if tracee.netlink_route_fds.len() >= crate::tracee::MAX_NETLINK_ROUTE_FDS {
+        prune_closed_sockets(tracee);
+    }
+    if tracee.netlink_route_fds.len() < crate::tracee::MAX_NETLINK_ROUTE_FDS
+        && !tracee
+            .netlink_route_fds
+            .iter()
+            .any(|s| s.identity == identity)
+    {
+        tracee.netlink_route_fds.push(TrackedFd { fd, identity });
     }
 }
 
@@ -1427,27 +1503,84 @@ mod tests {
 
     #[test]
     fn fake_fd_bookkeeping() {
+        use std::os::fd::AsRawFd;
+        let (socket, _peer) = std::os::unix::net::UnixDatagram::pair().unwrap();
+        let fd = socket.as_raw_fd();
         let mut t = test_tracee("/", &[]);
-        t.fake_netlink_fds.push(FakeNetlinkSocket {
-            fd: 7,
-            reply: vec![0; MAX_FAKE_NETLINK_REPLY],
-            reply_off: 0,
-        });
-        assert!(is_fake_netlink_fd(&t, 7));
-        assert!(!is_fake_netlink_fd(&t, 8));
+        t.pid = std::process::id() as i32;
+        mark_fake_netlink_fd(&mut t, fd);
+        assert!(is_fake_netlink_fd(&t, fd));
         assert!(!is_fake_netlink_fd(&t, -1));
-        assert_eq!(fake_netlink_idx(&t, 7), Some(0));
-        unmark_fake_netlink_fd(&mut t, 7);
-        assert!(!is_fake_netlink_fd(&t, 7));
+        assert_eq!(fake_netlink_idx(&t, fd), Some(0));
+        unmark_fake_netlink_fd(&mut t, fd);
+        assert!(!is_fake_netlink_fd(&t, fd));
         // Route-fd bookkeeping + ack-pending reset.
-        let mut t = test_tracee("/", &[]);
-        t.netlink_route_fds.push(4);
+        mark_netlink_route_fd(&mut t, fd);
         t.netlink_ack_pending = true;
-        t.netlink_ack_fd = 4;
-        assert!(is_netlink_route_fd(&t, 4));
-        unmark_netlink_route_fd(&mut t, 4);
-        assert!(!is_netlink_route_fd(&t, 4));
+        t.netlink_ack_fd = fd;
+        t.netlink_ack_identity = FdIdentity::read(t.pid, fd);
+        assert!(is_netlink_route_fd(&t, fd));
+        unmark_netlink_route_fd(&mut t, fd);
+        assert!(!is_netlink_route_fd(&t, fd));
         assert!(!t.netlink_ack_pending);
+    }
+
+    #[test]
+    fn duplicated_socket_keeps_state_but_replaced_number_does_not() {
+        use std::os::fd::AsRawFd;
+        let (socket, _peer) = std::os::unix::net::UnixDatagram::pair().unwrap();
+        let duplicate = socket.try_clone().unwrap();
+        let replacement = std::fs::File::open("/dev/null").unwrap();
+        let fd = socket.as_raw_fd();
+        let dup_fd = duplicate.as_raw_fd();
+        let mut t = test_tracee("/", &[]);
+        t.pid = std::process::id() as i32;
+        mark_fake_netlink_fd(&mut t, fd);
+        mark_netlink_route_fd(&mut t, fd);
+        t.fake_netlink_fds[0].reply = b"pending reply".to_vec();
+        t.netlink_ack_pending = true;
+        t.netlink_ack_identity = FdIdentity::read(t.pid, fd);
+
+        // dup() aliases the same socket and shares its pending reply.
+        let idx = fake_netlink_idx(&t, dup_fd).unwrap();
+        assert_eq!(t.fake_netlink_fds[idx].reply, b"pending reply");
+        assert!(is_netlink_route_fd(&t, dup_fd));
+        assert!(is_pending_ack_fd(&t, dup_fd));
+
+        // dup2() implicitly closes the original fd and reuses its number.
+        assert_eq!(crate::sys::dup2(replacement.as_raw_fd(), fd), fd);
+        assert!(!is_fake_netlink_fd(&t, fd));
+        assert!(!is_netlink_route_fd(&t, fd));
+        assert!(!is_pending_ack_fd(&t, fd));
+        assert!(is_fake_netlink_fd(&t, dup_fd));
+        assert!(is_netlink_route_fd(&t, dup_fd));
+
+        // A table sweep must retain the socket through its surviving alias.
+        prune_closed_sockets(&mut t);
+        assert!(is_fake_netlink_fd(&t, dup_fd));
+        assert!(is_netlink_route_fd(&t, dup_fd));
+        drop(duplicate);
+        prune_closed_sockets(&mut t);
+        assert!(t.fake_netlink_fds.is_empty());
+        assert!(t.netlink_route_fds.is_empty());
+        assert!(!t.netlink_ack_pending);
+    }
+
+    #[test]
+    fn repeated_socket_close_reclaims_emulation_slots() {
+        use std::os::fd::AsRawFd;
+        let mut t = test_tracee("/", &[]);
+        t.pid = std::process::id() as i32;
+        for _ in 0..3 * crate::tracee::MAX_FAKE_NETLINK_FDS {
+            let (socket, _peer) = std::os::unix::net::UnixDatagram::pair().unwrap();
+            mark_fake_netlink_fd(&mut t, socket.as_raw_fd());
+            mark_netlink_route_fd(&mut t, socket.as_raw_fd());
+            assert!(is_fake_netlink_fd(&t, socket.as_raw_fd()));
+            assert!(is_netlink_route_fd(&t, socket.as_raw_fd()));
+        }
+        prune_closed_sockets(&mut t);
+        assert!(t.fake_netlink_fds.is_empty());
+        assert!(t.netlink_route_fds.is_empty());
     }
 
     #[test]

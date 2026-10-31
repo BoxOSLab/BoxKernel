@@ -55,7 +55,11 @@ def main():
     binaries = [str(p.resolve(strict=True)) for p in (args.before, args.after)]
     env = dict(os.environ, LC_ALL="C", PYTHONDONTWRITEBYTECODE="1")
     # Both binaries must use the same accelerator settings.
-    for name in ("PROOT_NO_SECCOMP", "PROOT_FORCE_KOMPAT", "PROOT_VERBOSE"):
+    for name in (
+        "PROOT_NO_SECCOMP", "PROOT_FORCE_KOMPAT", "PROOT_VERBOSE", "PROOT_LOADER",
+        "BOXKERNEL_NO_PATH_CACHE", "BOXKERNEL_NO_NATIVE_PATHS", "BOXKERNEL_LEGACY_LOADER",
+        "BOXKERNEL_PIPE_SHADOW",
+    ):
         env.pop(name, None)
     results = []
     with tempfile.TemporaryDirectory(prefix="boxkernel-bench-") as temporary:
@@ -75,6 +79,8 @@ def main():
         if shutil.which("python3"):
             workloads.append(("host.python", [], ["python3", "-c",
                 "import json, email, http.client, asyncio, unittest"]))
+            workloads.append(("host.stat5000", [], ["python3", "-c",
+                "import os; [os.stat('/usr/share/doc/bash/copyright') for _ in range(5000)]"]))
         if args.rootfs:
             prefix = ["-r", str(args.rootfs.resolve(strict=True)), "-0", "-w", "/",
                 "-b", "/dev", "-b", "/proc", "--link2symlink", "-L", "--kill-on-exit"]
@@ -84,6 +90,9 @@ def main():
                 ("rootfs.ls", prefix, ["/bin/ls", "-lR", "/etc"]),
                 ("rootfs.find", prefix, ["/usr/bin/find", "/usr/share/doc", "-type", "f"]),
             ])
+            if (args.rootfs / "usr/bin/perl").is_file():
+                workloads.append(("rootfs.stat5000", prefix, ["/usr/bin/perl", "-e",
+                    'for (1..5000) { my @s = stat("/usr/share/doc/bash/copyright"); die $! unless @s; }']))
         print("| Workload | Before ms | After ms | Speedup | Tracer calls before → after |")
         print("|---|---:|---:|---:|---:|")
         for name, prefix, guest in workloads:

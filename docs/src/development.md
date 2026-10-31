@@ -33,20 +33,18 @@ $ cargo doc --no-deps --document-private-items
 `clippy::all` warn (CI: `-D warnings`). `deny.toml`: license
 allow-list, advisory DB, banned sources.
 
-## The parity rule
+## Behavior and performance changes
 
 Every `src/` file is a named port of a C unit (comments say so:
 `// port of tracee/event.c`). When changing behavior:
 
-1. Find the C counterpart — the reference checkout is the spec.
-2. Keep C-identical **errno semantics**: innermost `-errno` returns,
-   `sys::clear_errno()` before calls judged by `errno == 0`,
-   `process_vm_*` fast-path success *must* clear a potentially stale
-   errno (the C code does this inside the mem primitives — a subtle
-   rule that already bit us once).
-3. Keep C's verdicts for weird cases — they are almost always
-   load-bearing (e.g. `deliver_sigtrap`, `INHERIT_PARENT → shared`,
-   `reconf.tracee == NULL` runner resolution).
+1. Use the C counterpart to understand existing behavior and edge cases.
+2. Preserve the kernel FFI contract: clear stale errno before calls whose
+   result is judged through errno, validate layouts, and keep unsafe
+   boundaries explicit.
+3. Intentional departures from C PRoot are allowed. Document the
+   observable changes and test them directly. Include repeatable
+   before/after measurements for performance changes.
 
 ## The unsafe policy
 
@@ -80,8 +78,7 @@ src/
   arch.rs note.rs util.rs
 loader/             no_std execve-completion stub
 data/               sysnums-*.txt tables
-tests/              (empty — unit tests are #[cfg(test)] in-file;
-                     integration = upstream C suite)
+tests/              end-to-end Rust integration tests
 docs/               this book
 doc/proot.1         man page
 ```
@@ -113,5 +110,5 @@ See [Extension framework → Writing an extension](extensions.md#writing-an-exte
 
 - Small focused commits, imperative subject; *why* in the body.
 - CI must be green: fmt, clippy, tests, deny, docs.
-- Behavioral changes need the upstream suite green (see
-  [Testing](testing.md)).
+- Run relevant upstream cases to assess compatibility; compare baseline
+  failures and document deliberate differences (see [Testing](testing.md)).

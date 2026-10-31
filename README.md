@@ -38,6 +38,11 @@ or instrument Linux processes through its extension mechanism.
   and a mountinfo rewriter.
 * **Seccomp acceleration** — kernel-side syscall filtering reduces
   ptrace round-trips where supported.
+* **Performance defaults** — bounded directory caching, native ELF
+  loading, untraced stat calls in identity namespaces, and lazy
+  descriptor tracking reduce tracer work. See
+  [measurements](docs/src/performance.md) and
+  [behavior controls](docs/src/compatibility.md).
 * **ptrace instrumentation engine** — extensions subscribe to typed
   events (path translation, syscall enter/exit, inheritance, signals)
   through a single modular dispatcher.
@@ -46,8 +51,9 @@ or instrument Linux processes through its extension mechanism.
 
 The C reference implementation is battle-tested but carries decades of
 manual memory management, global state, and unchecked pointers. This
-rewrite keeps **behavioral parity** (validated against the C test
-suite — 113 checks green) while gaining Rust's guarantees:
+rewrite develops these features with Rust's guarantees and measured
+performance improvements. Intentional behavior changes are documented
+in the [compatibility guide](docs/src/compatibility.md).
 
 * All `libc`/kernel-boundary `unsafe` is isolated in one auditable
   module ([`src/sys.rs`](src/sys.rs)); no `static mut`, no `transmute`,
@@ -78,8 +84,9 @@ $ ./target/release/proot -0 -r ~/alpine-rootfs /sbin/apk add gcc
 $ ./target/release/proot -R ~/armhf-rootfs -q qemu-arm /bin/bash
 ```
 
-The installed binary is named `proot` for drop-in compatibility with
-existing scripts (e.g. `proot-distro`).
+The installed binary is named `proot` for use with existing command
+lines and scripts (e.g. `proot-distro`). Exact C PRoot parity is not
+guaranteed.
 
 ## Documentation
 
@@ -91,7 +98,7 @@ existing scripts (e.g. `proot-distro`).
 | [Extensions](docs/src/extensions.md) | What each built-in extension does and how to write one |
 | [Mixed mode & QEMU](docs/src/mixed-mode.md) | Foreign-architecture and host/guest mixed execution |
 | [Security model](docs/src/security.md) | What BoxKernel does *not* protect you from |
-| [Development](docs/src/development.md) | Toolchain, lint/test commands, unsafe policy, parity rules |
+| [Development](docs/src/development.md) | Toolchain, lint/test commands, unsafe policy, behavior changes |
 | [Testing](docs/src/testing.md) | Unit tests and the C-reference integration suite |
 | `man proot` ([doc/proot.1](doc/proot.1)) | The manual page |
 

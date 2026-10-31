@@ -5,6 +5,35 @@ mod common;
 use common::*;
 
 #[test]
+fn native_loader_reports_fake_identity_in_initial_auxv() {
+    for (identity, uid, gid) in [("123:456", "123", "456"), ("0:0", "0", "0")] {
+        let out = run_ok(&["-i", identity, "env", "LD_SHOW_AUXV=1", "/bin/true"], &[]);
+        let output = stdout(&out);
+        // Older Bionic versions do not implement LD_SHOW_AUXV.
+        if !output.contains("AT_UID") {
+            continue;
+        }
+        for (name, value) in [
+            ("AT_UID", uid),
+            ("AT_EUID", uid),
+            ("AT_GID", gid),
+            ("AT_EGID", gid),
+        ] {
+            let line = output
+                .lines()
+                .find(|line| {
+                    line.split_whitespace()
+                        .next()
+                        .map(|key| key.trim_end_matches(':'))
+                        == Some(name)
+                })
+                .unwrap_or_else(|| panic!("missing {name}: {output}"));
+            assert_eq!(line.split_whitespace().last(), Some(value), "{output}");
+        }
+    }
+}
+
+#[test]
 fn fake_id0_makes_uid_zero() {
     let out = run_ok(&["-0", SH, "-c", "id -u"], &[]);
     assert_eq!(stdout(&out).trim(), "0");
@@ -19,6 +48,32 @@ fn fake_id0_files_look_owned_by_root() {
         &[],
     );
     assert_eq!(stdout(&out).trim(), "0");
+}
+
+#[test]
+fn identity_stat_matches_the_kernel_until_an_extension_rewrites_it() {
+    let f = Fixture::new("identity-stat");
+    let file = f.file("owned.txt", "payload");
+    let path = file.display().to_string();
+    let host = std::process::Command::new("stat")
+        .args(["-c", "%u:%g:%s:%f", &path])
+        .output()
+        .unwrap();
+    assert!(
+        host.status.success(),
+        "{}",
+        String::from_utf8_lossy(&host.stderr)
+    );
+    let expected = String::from_utf8(host.stdout).unwrap();
+    let guest = run_ok(&[SH, "-c", &format!("stat -c %u:%g:%s:%f {path}")], &[]);
+    assert_eq!(stdout(&guest), expected);
+    let opted_out = run_ok(
+        &[SH, "-c", &format!("stat -c %u:%g:%s:%f {path}")],
+        &[("BOXKERNEL_NO_NATIVE_PATHS", "1")],
+    );
+    assert_eq!(stdout(&opted_out), expected);
+    let rooted = run_ok(&["-0", SH, "-c", &format!("stat -c %u:%g {path}")], &[]);
+    assert_eq!(stdout(&rooted).trim(), "0:0");
 }
 
 #[test]

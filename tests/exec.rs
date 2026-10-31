@@ -76,6 +76,108 @@ fn nested_exec_under_proot_works() {
 }
 
 #[test]
+fn native_and_legacy_loader_modes() {
+    if !have("python3") {
+        return;
+    }
+    let script = format!(
+        "import ctypes; c=ctypes.CDLL(None); c.getauxval.restype=ctypes.c_ulong; print('legacy' if c.getauxval(7)=={} else 'native')",
+        boxkernel::arch::INTERP_PIC_ADDRESS
+    );
+    for (env, expected) in [
+        (vec![], "native\n"),
+        (vec![("BOXKERNEL_LEGACY_LOADER", "1")], "legacy\n"),
+        (vec![("PROOT_NO_SECCOMP", "1")], "native\n"),
+    ] {
+        let out = run_ok(&["python3", "-c", &script], &env);
+        assert_eq!(stdout(&out), expected);
+    }
+}
+
+#[test]
+fn native_exec_does_not_require_writable_temporary_storage() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new("native-readonly-temp");
+    std::fs::set_permissions(&fixture.root, std::fs::Permissions::from_mode(0o555)).unwrap();
+    // Privileged test runners can write despite directory mode bits.
+    if std::fs::write(fixture.root.join("probe"), "probe").is_ok() {
+        std::fs::set_permissions(&fixture.root, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    let temporary = fixture.root.to_str().unwrap();
+    let native = run_ok(&["/bin/true"], &[("PROOT_TMP_DIR", temporary)]);
+    assert!(stderr(&native).is_empty(), "{}", stderr(&native));
+    let legacy = run(
+        &["/bin/true"],
+        &[
+            ("PROOT_TMP_DIR", temporary),
+            ("BOXKERNEL_LEGACY_LOADER", "1"),
+        ],
+    );
+    std::fs::set_permissions(&fixture.root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!legacy.status.success());
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn native_exec_refreshes_abi_before_first_compat_syscall() {
+    if !have("cc") {
+        return;
+    }
+    let fixture = Fixture::new("native-compat-abi");
+    let owned_file = fixture.file("owned-file", "fixture\n");
+    let source = fixture.file(
+        "compat.S",
+        &format!(
+            r#"
+.section .data
+path: .asciz "{}"
+buffer: .space 96
+.section .text
+.global _start
+_start:
+    mov $195, %eax
+    mov $path, %ebx
+    mov $buffer, %ecx
+    int $0x80
+    test %eax, %eax
+    jne failed
+    cmpl $123, buffer+24
+    jne failed
+    cmpl $456, buffer+28
+    jne failed
+    xor %ebx, %ebx
+    jmp done
+failed:
+    mov $1, %ebx
+done:
+    mov $1, %eax
+    int $0x80
+.section .note.GNU-stack,"",@progbits
+"#,
+            owned_file.display()
+        ),
+    );
+    let executable = fixture.root.join("compat");
+    let build = std::process::Command::new("cc")
+        .args(["-m32", "-nostdlib", "-static", "-Wl,-e,_start"])
+        .arg(&source)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .unwrap();
+    assert!(build.status.success(), "{}", stderr(&build));
+    // Some x86_64 kernels are built without IA32 execution support.
+    if let Err(error) = std::process::Command::new(&executable).status() {
+        assert_eq!(error.raw_os_error(), Some(8));
+        return;
+    }
+    for env in [vec![], vec![("PROOT_NO_SECCOMP", "1")]] {
+        run_ok(&["-i", "123:456", executable.to_str().unwrap()], &env);
+    }
+}
+
+#[test]
 fn executable_pipe_preserves_script_body() {
     if !have("python3") {
         return;

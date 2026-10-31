@@ -1001,6 +1001,9 @@ pub fn attach_child(parent_rc: &TraceeRef, clone_flags: Word, pid: i32) -> i32 {
     child.sysexit_pending = parent.sysexit_pending;
     child.execfn_addr = parent.execfn_addr;
     child.auxv_fd = parent.auxv_fd;
+    child.auxv_fd_identity = parent.auxv_fd_identity;
+    child.auxv_stack_pointer = parent.auxv_stack_pointer;
+    child.auxv_file = parent.auxv_file.clone();
     child.no_new_privs = parent.no_new_privs;
     child.seen_execve = parent.seen_execve;
 
@@ -1093,6 +1096,7 @@ pub fn attach_child(parent_rc: &TraceeRef, clone_flags: Word, pid: i32) -> i32 {
         .iter()
         .map(|f| crate::tracee::FakeNetlinkSocket {
             fd: f.fd,
+            identity: f.identity,
             reply: Vec::new(),
             reply_off: 0,
         })

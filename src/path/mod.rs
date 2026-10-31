@@ -2,6 +2,7 @@
 //! temp files — port of src/path/*.
 
 pub mod binding;
+pub(crate) mod cache;
 pub mod canon;
 pub mod f2fs;
 pub mod glue;
@@ -42,6 +43,48 @@ impl Finality {
     pub fn is_final(self) -> bool {
         !matches!(self, Finality::NotFinal)
     }
+}
+
+/// Whether an absolute path argument can retain the tracee's original
+/// pointer and be resolved by the kernel without userspace translation.
+/// This is limited to an identity namespace running a genuine kernel-loaded
+/// image; legacy-loader images need proc emulation even through symlinks.
+/// Native resolution can intentionally differ from C canonicalization,
+/// including errors and symlink aliases into another task's kernel proc view.
+pub(crate) fn can_use_native_path(tracee: &crate::tracee::Tracee, path: &[u8]) -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("BOXKERNEL_NO_NATIVE_PATHS").is_none())
+        && native_path_candidate(tracee, path)
+}
+
+fn native_path_candidate(tracee: &crate::tracee::Tracee, path: &[u8]) -> bool {
+    if path.first() != Some(&b'/')
+        || path.starts_with(b"//")
+        || path
+            .split(|&b| b == b'/')
+            .any(|part| part == b"." || part == b"..")
+        || cache::is_dynamic_path(path)
+        || tracee.qemu.is_some()
+        || tracee.glue_type != 0
+        || tracee.glue.is_some()
+        || tracee.reconf_tracee.is_some()
+        || !tracee.heap.borrow().disabled
+        || tracee.execfn_addr != 0
+        || tracee
+            .extensions
+            .iter()
+            .flatten()
+            .any(|ext| !matches!(ext, crate::extension::AnyExtension::Mountinfo(_)))
+    {
+        return false;
+    }
+    let fs = tracee.fs.borrow();
+    fs.pending.is_empty()
+        && fs.guest.len() == 1
+        && fs.host.len() == 1
+        && fs.guest[0].guest.as_bytes() == b"/"
+        && fs.guest[0].host.as_bytes() == b"/"
+        && !fs.guest[0].need_substitution
 }
 
 /// `compare_paths()` on byte strings.
@@ -434,6 +477,75 @@ pub fn detranslate_path(
 mod tests {
     use super::*;
     use crate::testutil::{TempDir, detranslate, test_tracee, translate};
+
+    #[test]
+    fn native_paths_require_identity_namespace_and_native_image() {
+        let mut t = test_tracee("/", &[]);
+        assert!(!native_path_candidate(&t, b"/usr/lib/file"));
+        t.heap.borrow_mut().disabled = true;
+        // A fork inherits heap mode, rather than the transient exec flag.
+        t.skip_proot_loader = false;
+        for path in [
+            b"/usr/lib/file".as_slice(),
+            b"/etc/passwd",
+            b"/tmp/link/exe",
+            b"/",
+        ] {
+            assert!(native_path_candidate(&t, path));
+        }
+        for path in [
+            b"relative/path".as_slice(),
+            b"/proc/self/exe",
+            b"/sys/devices",
+            b"/dev/fd/0",
+            b"/usr/../proc/self/exe",
+            b"/./proc/self/exe",
+            b"//proc/self/exe",
+        ] {
+            assert!(!native_path_candidate(&t, path));
+        }
+        t.heap.borrow_mut().disabled = false;
+        t.skip_proot_loader = true;
+        assert!(!native_path_candidate(&t, b"/tmp/link/exe"));
+        // Heap emulation can also be disabled by a native brk workaround;
+        // a custom loader's AT_EXECFN fixup still disqualifies that image.
+        t.heap.borrow_mut().disabled = true;
+        t.execfn_addr = 0x1234;
+        assert!(!native_path_candidate(&t, b"/tmp/link/exe"));
+    }
+
+    #[test]
+    fn native_paths_reject_bindings_qemu_and_policy_extensions() {
+        let td = TempDir::new("native-paths");
+        td.dir("source");
+        let bound = test_tracee("/", &[(td.path().join("source").to_str().unwrap(), "/tmp")]);
+        bound.heap.borrow_mut().disabled = true;
+        assert!(!native_path_candidate(&bound, b"/usr/lib/file"));
+        let rooted = test_tracee(td.path().to_str().unwrap(), &[]);
+        rooted.heap.borrow_mut().disabled = true;
+        assert!(!native_path_candidate(&rooted, b"/usr/lib/file"));
+
+        let mut t = test_tracee("/", &[]);
+        t.heap.borrow_mut().disabled = true;
+        t.extensions
+            .push(Some(crate::extension::AnyExtension::Mountinfo(
+                crate::extension::mountinfo::Mountinfo,
+            )));
+        assert!(native_path_candidate(&t, b"/usr/lib/file"));
+        t.extensions
+            .push(Some(crate::extension::AnyExtension::FakeId0(
+                Default::default(),
+            )));
+        assert!(!native_path_candidate(&t, b"/usr/lib/file"));
+        t.extensions.pop();
+        t.qemu = Some(std::rc::Rc::from(
+            vec!["qemu".to_string()].into_boxed_slice(),
+        ));
+        assert!(!native_path_candidate(&t, b"/usr/lib/file"));
+        t.qemu = None;
+        t.glue = Some(std::rc::Rc::from("/tmp/glue"));
+        assert!(!native_path_candidate(&t, b"/usr/lib/file"));
+    }
 
     #[test]
     fn compare_paths_basic() {

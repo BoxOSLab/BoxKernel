@@ -344,6 +344,27 @@ fn get_loader_path(tracee: &Tracee) -> Option<String> {
     LOADER_PATH.get_or_init(|| extract_loader(tracee)).clone()
 }
 
+/// Whether the kernel sees the same absolute filesystem paths as the guest.
+/// In that case it can load the ELF interpreter directly, including ASLR
+/// and the native brk, instead of executing our freestanding loader first.
+fn native_loader_namespace(tracee: &Tracee) -> bool {
+    if tracee.qemu.is_some()
+        || tracee.as_ptracee.ptracer != 0
+        || tracee.glue_type != 0
+        || tracee.glue.is_some()
+        || tracee.reconf_tracee.is_some()
+    {
+        return false;
+    }
+    let fs = tracee.fs.borrow();
+    fs.pending.is_empty()
+        && !fs.guest.is_empty()
+        && fs
+            .guest
+            .iter()
+            .all(|binding| binding.host.as_bytes() == binding.guest.as_bytes())
+}
+
 /// `translate_execve_enter()`.
 pub fn translate_execve_enter(tracee: &mut Tracee) -> i32 {
     if is_notification_ptraced_load_done(tracee) {
@@ -408,12 +429,20 @@ pub fn translate_execve_enter(tracee: &mut Tracee) -> i32 {
         }
     }
 
+    // A script still needs the custom loader's argv/AT_EXECFN handling.
+    // Honor explicit loader overrides and allow callers to request the
+    // historical fixed-address loader even in an identity namespace.
+    if raw_path.is_none()
+        && native_loader_namespace(tracee)
+        && std::env::var_os("BOXKERNEL_LEGACY_LOADER").is_none()
+        && std::env::var_os("PROOT_LOADER").is_none()
+    {
+        tracee.skip_proot_loader = true;
+    }
+
     tracee.load_info = None;
 
     if tracee.skip_proot_loader {
-        if let Ok(mut heap) = tracee.heap.try_borrow_mut() {
-            heap.disabled = true;
-        }
         return set_sysarg_path(tracee, host_path.as_bytes(), Reg::Sysarg1);
     }
 
@@ -472,6 +501,25 @@ mod tests {
         ET_DYN, ET_EXEC, ElfHeader, ElfHeader64, ProgramHeader, ProgramHeader64,
     };
     use crate::testutil::test_tracee;
+
+    #[test]
+    fn native_loader_requires_identity_namespace() {
+        let t = test_tracee("/", &[]);
+        assert!(native_loader_namespace(&t));
+        let t = test_tracee("/", &[("/dev", "/dev")]);
+        assert!(native_loader_namespace(&t));
+        let t = test_tracee("/", &[("/dev", "/tmp")]);
+        assert!(!native_loader_namespace(&t));
+        let mut t = test_tracee("/", &[]);
+        t.as_ptracee.ptracer = 1;
+        assert!(!native_loader_namespace(&t));
+        let mut t = test_tracee("/", &[]);
+        t.qemu = Some(std::rc::Rc::from(vec!["qemu-aarch64".to_owned()]));
+        assert!(!native_loader_namespace(&t));
+        let td = crate::testutil::TempDir::new("native-loader");
+        let t = test_tracee(td.path().to_str().unwrap(), &[]);
+        assert!(!native_loader_namespace(&t));
+    }
 
     fn ehdr64(e_type: u16) -> ElfHeader {
         let mut h: ElfHeader64 = crate::sys::zeroed();
