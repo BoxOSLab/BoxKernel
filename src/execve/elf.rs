@@ -343,32 +343,44 @@ pub fn is_host_elf(tracee: &Tracee, t_path: &crate::fpath::FixedPath) -> bool {
 
 /// `iterate_program_headers()` — walk program headers of `fd`, calling `cb`
 /// on each.  The callback returns <0 to abort iteration.
+///
+/// The whole table is fetched with a single `pread` and walked in memory.
+/// Headers are handed to `cb` in order; the first non-zero status stops the
+/// walk and is returned.  If the table cannot be read in full (short read,
+/// read error, offset past EOF), the complete headers before the gap are
+/// still delivered and the result is `-EIO`.
 pub fn iterate_program_headers(
     fd: RawFd,
     elf_header: &ElfHeader,
     mut cb: impl FnMut(&ElfHeader, &ProgramHeader) -> i32,
 ) -> i32 {
     let phoff = elf_header.e_phoff();
-    let phentsize = elf_header.e_phentsize() as u64;
-    let phnum = elf_header.e_phnum() as u64;
-    if !known_phentsize(elf_header, phentsize) {
+    let phentsize = elf_header.e_phentsize() as usize;
+    let phnum = elf_header.e_phnum() as usize;
+    if !known_phentsize(elf_header, phentsize as u64) {
         return -libc::EINVAL;
     }
-    for i in 0..phnum {
+    if phnum == 0 {
+        return 0;
+    }
+
+    // At most 65535 entries of 56 bytes: a few MiB at worst.
+    let mut table = vec![0u8; phentsize * phnum];
+    let got = crate::sys::pread(fd, &mut table, phoff as i64);
+    // A failed read yields no complete entries; a partial trailing entry is
+    // not a complete header and is ignored.
+    let complete = if got < 0 { 0 } else { got as usize / phentsize };
+
+    for entry in table.chunks_exact(phentsize).take(complete) {
         let mut phdr: ProgramHeader = crate::sys::zeroed();
-        let off = phoff + i * phentsize;
-        let n = crate::sys::pread(
-            fd,
-            &mut crate::sys::as_bytes_mut(&mut phdr)[..phentsize as usize],
-            off as i64,
-        );
-        if n != phentsize as isize {
-            return -libc::EIO;
-        }
+        crate::sys::as_bytes_mut(&mut phdr)[..phentsize].copy_from_slice(entry);
         let status = cb(elf_header, &phdr);
         if status != 0 {
             return status;
         }
+    }
+    if complete < phnum {
+        return -libc::EIO;
     }
     0
 }
@@ -545,6 +557,86 @@ mod tests {
             got,
             Some((1, 0x1000, 0x400000, 0x100, 0x200, (PF_R | PF_X) as u64))
         );
+    }
+
+    /// Write `buf` as `name` in `td`, open it as an ELF and walk its program
+    /// headers, returning the walk result and the p_type of every callback.
+    fn walk(td: &TempDir, name: &str, buf: &[u8]) -> (i32, Vec<u64>) {
+        td.file(name, buf);
+        let c = std::ffi::CString::new(td.abs(name)).unwrap();
+        let (fd, h) = open_elf(&c).unwrap();
+        let mut seen = Vec::new();
+        let r = iterate_program_headers(fd, &h, |eh, ph| {
+            seen.push(ph.p_type(eh));
+            0
+        });
+        crate::sys::close(fd);
+        (r, seen)
+    }
+
+    #[test]
+    fn iterate_program_headers_truncated_table() {
+        let td = TempDir::new("elf");
+        let full = make_elf(true, ET_EXEC, 62, &[PT_LOAD, PT_INTERP, PT_LOAD]);
+        // Cut the file in the middle of the third entry: two complete
+        // headers are delivered, then the walk reports EIO.
+        let cut = size_of::<ElfHeader64>() + 2 * size_of::<ProgramHeader64>() + 10;
+        let (r, seen) = walk(&td, "cut", &full[..cut]);
+        assert_eq!(r, -libc::EIO);
+        assert_eq!(seen, vec![PT_LOAD as u64, PT_INTERP as u64]);
+    }
+
+    #[test]
+    fn iterate_program_headers_cb_error_beats_eio() {
+        let td = TempDir::new("elf");
+        let full = make_elf(true, ET_EXEC, 62, &[PT_LOAD, PT_LOAD, PT_LOAD]);
+        // Only the first header is present.
+        td.file(
+            "one",
+            &full[..size_of::<ElfHeader64>() + size_of::<ProgramHeader64>()],
+        );
+        let c = std::ffi::CString::new(td.abs("one")).unwrap();
+        let (fd, h) = open_elf(&c).unwrap();
+        let mut n = 0;
+        let r = iterate_program_headers(fd, &h, |_, _| {
+            n += 1;
+            -libc::ELOOP
+        });
+        assert_eq!(r, -libc::ELOOP);
+        assert_eq!(n, 1);
+        // Without a callback error the same table reports EIO.
+        let mut n = 0;
+        let r = iterate_program_headers(fd, &h, |_, _| {
+            n += 1;
+            0
+        });
+        crate::sys::close(fd);
+        assert_eq!(r, -libc::EIO);
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn iterate_program_headers_empty_table() {
+        let td = TempDir::new("elf");
+        let (r, seen) = walk(&td, "e64", &make_elf(true, ET_EXEC, 62, &[]));
+        assert_eq!(r, 0);
+        assert!(seen.is_empty());
+    }
+
+    #[test]
+    fn iterate_program_headers_offset_out_of_range() {
+        let td = TempDir::new("elf");
+        // e_phoff sits at byte 32 of an ELF64 header.
+        let mut buf = make_elf(true, ET_EXEC, 62, &[PT_LOAD, PT_LOAD]);
+        buf[32..40].copy_from_slice(&(1u64 << 20).to_le_bytes());
+        let (r, seen) = walk(&td, "far", &buf);
+        assert_eq!(r, -libc::EIO);
+        assert!(seen.is_empty());
+        // An offset that does not fit a signed off_t fails the same way.
+        buf[32..40].copy_from_slice(&(1u64 << 63).to_le_bytes());
+        let (r, seen) = walk(&td, "neg", &buf);
+        assert_eq!(r, -libc::EIO);
+        assert!(seen.is_empty());
     }
 
     #[test]

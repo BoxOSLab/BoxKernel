@@ -44,6 +44,13 @@ re-implements ([Termux PRoot 5.1.0](https://github.com/termux/proot)).
 
 ### Changed
 
+- Reduce tracer syscalls by reusing path metadata and enter-stage path
+  translations, batching ELF and regular-file shebang reads, pooling boxed
+  path buffers, and batching fake ownership updates.
+- Search seccomp syscall numbers with a balanced tree and filter arguments
+  for `ioctl`, `prctl`, and resource-limit calls when extensions do not
+  require every call. Reuse fetched registers at seccomp stops.
+- Add a repeatable before/after benchmark with tracer syscall counts.
 - Expanded crate-level and module-level rustdoc coverage.
 - Tests that poked x86 register fields directly go through
   architecture-neutral helpers and run on both hosts.

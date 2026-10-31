@@ -277,6 +277,18 @@ pub fn translate_path(
     user_path: &[u8],
     deref_final: bool,
 ) -> Result<(), i32> {
+    translate_path_ext(tracee, result, dir_fd, user_path, deref_final).map(|_| ())
+}
+
+/// `translate_path()`, also telling whether the final component of the
+/// host path is a symlink, when that is known.
+pub fn translate_path_ext(
+    tracee: &mut crate::tracee::Tracee,
+    result: &mut FixedPath,
+    dir_fd: i32,
+    user_path: &[u8],
+    deref_final: bool,
+) -> Result<Option<bool>, i32> {
     let mut guest_path = PathGuard::new();
 
     if user_path.first() == Some(&b'/') {
@@ -308,21 +320,26 @@ pub fn translate_path(
     }
     if status > 0 {
         result.set(guest_path.as_bytes());
-        return finish_translate(tracee, result);
+        return finish_translate(tracee, result, None);
     }
 
     debug_assert!(result.as_bytes().first() == Some(&b'/'));
     join_paths2(&mut guest_path, result.as_bytes(), user_path)?;
     result.set(b"/");
 
-    canon::canonicalize(tracee, guest_path.as_bytes(), deref_final, result, 0)?;
+    // The canonicalizer's last lstat() was of the host path computed below.
+    let last = canon::canonicalize_inner(tracee, guest_path.as_bytes(), deref_final, result, 0)?;
 
     binding::substitute_binding(tracee, Side::Guest, result)?;
 
-    finish_translate(tracee, result)
+    finish_translate(tracee, result, last.map(|s| s.is_link()))
 }
 
-fn finish_translate(tracee: &mut crate::tracee::Tracee, result: &mut FixedPath) -> Result<(), i32> {
+fn finish_translate(
+    tracee: &mut crate::tracee::Tracee,
+    result: &mut FixedPath,
+    is_link: Option<bool>,
+) -> Result<Option<bool>, i32> {
     crate::verbose!(
         Some(tracee),
         2,
@@ -330,7 +347,7 @@ fn finish_translate(tracee: &mut crate::tracee::Tracee, result: &mut FixedPath) 
         tracee.vpid,
         result
     );
-    crate::extension::notify_translated_path(tracee, result)
+    crate::extension::notify_translated_path(tracee, result, is_link)
 }
 
 /// `detranslate_path()` — strip the root prefix or substitute a binding for a

@@ -68,13 +68,17 @@ pub(crate) fn as_bytes_mut<T>(value: &mut T) -> &mut [u8] {
 // Process identity
 // ==================================================================
 
+// PRoot never changes its own credentials, and fake_id0 compares against
+// them on every stat(2) exit: read them once.
 pub(crate) fn getuid() -> libc::uid_t {
+    static UID: std::sync::OnceLock<libc::uid_t> = std::sync::OnceLock::new();
     // SAFETY: getuid() has no failure modes.
-    unsafe { libc::getuid() }
+    *UID.get_or_init(|| unsafe { libc::getuid() })
 }
 pub(crate) fn getgid() -> libc::gid_t {
+    static GID: std::sync::OnceLock<libc::gid_t> = std::sync::OnceLock::new();
     // SAFETY: getgid() has no failure modes.
-    unsafe { libc::getgid() }
+    *GID.get_or_init(|| unsafe { libc::getgid() })
 }
 pub(crate) fn getpid() -> libc::pid_t {
     // SAFETY: getpid() has no failure modes.
@@ -375,6 +379,16 @@ pub(crate) fn stat(path: &CStr) -> Result<libc::stat, i32> {
     let mut st: libc::stat = zeroed();
     // SAFETY: &mut st is a valid out-pointer.
     if unsafe { libc::stat(path.as_ptr(), &mut st) } < 0 {
+        return Err(errno());
+    }
+    Ok(st)
+}
+
+/// `fstat(fd)`, or `Err(errno)`.
+pub(crate) fn fstat(fd: RawFd) -> Result<libc::stat, i32> {
+    let mut st: libc::stat = zeroed();
+    // SAFETY: &mut st is a valid out-pointer; the kernel validates fd.
+    if unsafe { libc::fstat(fd, &mut st) } < 0 {
         return Err(errno());
     }
     Ok(st)

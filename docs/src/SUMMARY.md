@@ -19,6 +19,7 @@
 
 - [Development guide](development.md)
 - [Testing](testing.md)
+- [Performance](performance.md)
 - [Compatibility with C PRoot](compatibility.md)
 
 ---

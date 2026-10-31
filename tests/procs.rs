@@ -5,6 +5,26 @@ mod common;
 use common::*;
 
 #[test]
+fn no_new_privs_reports_guest_intent() {
+    if !have("python3") {
+        return;
+    }
+    let script = r#"
+import ctypes
+prctl = ctypes.CDLL(None, use_errno=True).prctl
+prctl.argtypes = [ctypes.c_int] + [ctypes.c_ulong] * 4
+prctl.restype = ctypes.c_int
+print(prctl(39, 0, 0, 0, 0))  # PR_GET_NO_NEW_PRIVS hides the tracer's setting.
+assert prctl(38, 1, 0, 0, 0) == 0  # PR_SET_NO_NEW_PRIVS records guest intent.
+print(prctl(39, 0, 0, 0, 0))
+"#;
+    for env in [vec![], vec![("PROOT_NO_SECCOMP", "1")]] {
+        let out = run_ok(&["python3", "-c", script], &env);
+        assert_eq!(stdout(&out), "0\n1\n");
+    }
+}
+
+#[test]
 fn forked_child_is_traced() {
     // A child spawned by the tracee runs under the same virtualization.
     let f = Fixture::new("fork");

@@ -91,12 +91,16 @@ fn kernel_cancels_voided_syscall() -> bool {
 
 /// `translate_syscall()` — dispatch one sysenter/sysexit stop.
 pub fn translate_syscall(tracee: &mut Tracee) {
-    let is_enter_stage = is_in_sysenter(tracee);
-    debug_assert!(tracee.exe.is_some());
-
     if fetch_regs(tracee) < 0 {
         return;
     }
+    translate_syscall_fetched(tracee);
+}
+
+/// `translate_syscall()` for a stop whose registers were already fetched.
+pub fn translate_syscall_fetched(tracee: &mut Tracee) {
+    let is_enter_stage = is_in_sysenter(tracee);
+    debug_assert!(tracee.exe.is_some());
 
     let mut suppressed_syscall_status = 0;
 

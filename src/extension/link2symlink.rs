@@ -13,7 +13,7 @@ use std::os::unix::ffi::OsStrExt;
 use crate::PATH_MAX;
 use crate::Word;
 use crate::extension::Event;
-use crate::fpath::FixedPath;
+use crate::fpath::{FixedPath, PathGuard};
 use crate::path::f2fs::should_skip_file_access_due_to_f2fs_bug;
 use crate::path::{Comparison, compare_paths, detranslate_path, readlink_proc_pid_fd};
 use crate::syscall::seccomp::FILTER_SYSEXIT;
@@ -752,7 +752,7 @@ fn handle_sysexit_end(tracee: &mut Tracee, config: &mut L2sConfig) -> i32 {
                 return 0;
             }
 
-            let mut original = FixedPath::default();
+            let mut original = PathGuard::new();
             if sysnum == Sysnum::fstat64 || sysnum == Sysnum::fstat {
                 // non-USERLAND: resolve the fd via /proc/<pid>/fd/<fd>.
                 let fd = peek_reg(tracee, RegVersion::Modified, Reg::Sysarg1) as i32;
@@ -777,16 +777,27 @@ fn handle_sysexit_end(tracee: &mut Tracee, config: &mut L2sConfig) -> i32 {
                 } else {
                     Reg::Sysarg1
                 };
-                let size = read_path(
-                    tracee,
-                    &mut original,
-                    peek_reg(tracee, RegVersion::Modified, sysarg_path),
-                );
-                if size < 0 {
-                    return size;
-                }
-                if size as usize >= PATH_MAX {
-                    return -libc::ENAMETOOLONG;
+                if let Some(p) = tracee.enter_path(sysarg_path) {
+                    // Neither a symlink nor an l2s file: nothing to fix, as
+                    // the lstat(2) below would tell.
+                    if p.is_link == Some(false)
+                        && !base_name(p.host_path.as_bytes()).starts_with(PREFIX)
+                    {
+                        return 0;
+                    }
+                    original.set(p.host_path.as_bytes());
+                } else {
+                    let size = read_path(
+                        tracee,
+                        &mut original,
+                        peek_reg(tracee, RegVersion::Modified, sysarg_path),
+                    );
+                    if size < 0 {
+                        return size;
+                    }
+                    if size as usize >= PATH_MAX {
+                        return -libc::ENAMETOOLONG;
+                    }
                 }
             }
             let original_b = original.as_bytes().to_vec();
@@ -910,7 +921,12 @@ fn remember_opened_link(tracee: &mut Tracee, config: &mut L2sConfig, host_path: 
 
 /// `translated_path()` — when `translated_path` is a faked hard link,
 /// replace it with the file it (internally) points to.
-fn translated_path(tracee: &mut Tracee, config: &mut L2sConfig, translated_path: &mut FixedPath) {
+fn translated_path(
+    tracee: &mut Tracee,
+    config: &mut L2sConfig,
+    translated_path: &mut FixedPath,
+    is_link: &mut Option<bool>,
+) {
     // The tracee is not started yet: PRoot is looking up the program to
     // launch (which()). Keep the name of a faked hard link so the first
     // execve's canonicalization goes through it and /proc/<pid>/exe
@@ -938,9 +954,14 @@ fn translated_path(tracee: &mut Tracee, config: &mut L2sConfig, translated_path:
     // The canonicalization dereferenced the faked hard links this path
     // was made of, except its last component when it was asked not to —
     // lstat(2), open(O_NOFOLLOW), ... — in which case that is done here.
-    if let Ok(final_path) = resolve_faked_hard_link(translated_path.as_bytes()) {
-        config.dereferenced_link.set(translated_path.as_bytes());
-        translated_path.set(&final_path);
+    // A faked hard link is a symlink: skip the readlink(2) probe when the
+    // canonicalizer already knows the last component is not one.
+    if *is_link != Some(false) {
+        if let Ok(final_path) = resolve_faked_hard_link(translated_path.as_bytes()) {
+            config.dereferenced_link.set(translated_path.as_bytes());
+            translated_path.set(&final_path);
+            *is_link = None;
+        }
     }
     if is_open_syscall(sysnum) {
         remember_opened_link(tracee, config, translated_path.as_bytes());
@@ -1127,8 +1148,8 @@ impl Link2symlink {
                 remember_dereferenced_link(&mut self.config, link.as_bytes(), referree.as_bytes());
                 0
             }
-            Event::TranslatedPath { path } => {
-                translated_path(tracee, &mut self.config, path);
+            Event::TranslatedPath { path, is_link } => {
+                translated_path(tracee, &mut self.config, path, is_link);
                 0
             }
             Event::StatxSyscall { state } => {

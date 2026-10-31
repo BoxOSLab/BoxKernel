@@ -6,7 +6,7 @@
 |---|---|---|---|
 | Unit | Pure logic (path canonicalizer, `FixedPath`, `compare_paths`) | `#[cfg(test)]` in `src/` | `cargo test` |
 | Smoke | Binary boots, binds, fakes root | CI `smoke test` step | `proot -0 id -u`, `proot -b …` |
-| **Reference suite** | The C implementation's full integration suite run against the Rust binary | `proot/tests/` in the C checkout | `make -C tests` |
+| **Reference suite** | The C implementation's full integration suite run against the Rust binary | `proot/tests/` in the C checkout | `make -C tests check` |
 
 The third layer is the real contract — BoxKernel exists to be a
 drop-in replacement, so the C suite *is* the specification.
@@ -19,14 +19,18 @@ You need a checkout of the C reference next to this repo:
 $ git clone https://github.com/termux/proot.git ../proot
 $ cargo build --release
 $ cd ../proot/tests
-$ make test PROOT=/abs/path/to/BoxKernel/target/release/proot
+$ make check PROOT=/abs/path/to/BoxKernel/target/release/proot
 ```
 
-Expected result (x86-64 host):
+Record the reference checkout's commit with `git rev-parse HEAD`; its
+tests evolve independently of this repository. The target is **zero
+failures**. Missing QEMU binaries, 32-bit libraries or other optional
+tools may cause tests to be skipped. The Makefile reports `ok`,
+`FAILED` and `skipped`; a test target may contain several checks.
 
-- **113 tests `ok`**, **0 failed**
-- 8 `skipped` — tests requiring QEMU/rootfs artifacts not present
-- 9 `xfail`/`xpass` — upstream-expected anomalies, identical to C
+The latest performance validation found existing compatibility failures
+in the current reference suite. See [Performance](performance.md#validation)
+for the reference revision, results and baseline comparison.
 
 A change is *done* only when this suite is green — the same suite the
 C implementation passes.
@@ -62,12 +66,13 @@ produce.
 
 ## Performance sanity
 
-No formal benchmark yet. Quick sanity:
+Use the repeatable benchmark to compare release binaries on identical
+workloads (Python 3 and `strace` are required):
 
 ```console
-$ time proot -r rootfs /bin/sh -c 'for i in $(seq 1000); do /bin/true; done'
-$ time proot -r rootfs /bin/sh -c 'cat large_file >/dev/null'
+$ python3 benchmarks/compare.py /path/to/before/proot target/release/proot --json target/performance.json
+$ python3 benchmarks/compare.py /path/to/before/proot target/release/proot --rootfs /path/to/rootfs
 ```
 
-I/O-bound work should be near-native; syscall storms show the ptrace
-cost (seccomp helps where enabled).
+See [Performance](performance.md) for the workloads, methodology and
+recorded results.

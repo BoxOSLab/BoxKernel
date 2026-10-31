@@ -45,17 +45,70 @@ fn next_component<'a>(cursor: &mut &'a [u8]) -> Result<(&'a [u8], Finality), i32
     }
 }
 
+/// What the lstat() of a component's host path found: `found` is false when
+/// it failed, `mode` is its `st_mode` (0 on failure, barring fix-ups).
+#[derive(Copy, Clone)]
+pub(crate) struct HostStat {
+    found: bool,
+    mode: libc::mode_t,
+}
+
+impl HostStat {
+    pub(crate) fn is_link(self) -> bool {
+        (self.mode & libc::S_IFMT) == libc::S_IFLNK
+    }
+}
+
 /// `substitute_binding_stat()` — substitute bindings into `host_path`, then
-/// lstat().  Returns Ok(true) when it names a symlink.
+/// lstat().  A caller that already lstat'ed this very host path passes the
+/// outcome as `known` instead of paying for the syscall again.
+///
+/// The lstat() runs before the HOST_PATH notification so extensions can
+/// reuse it: an extension may chmod the component (fake_id0), but that
+/// changes neither its type nor whether it can be looked up, which is all
+/// this function reads.
 fn substitute_binding_stat(
     tracee: &mut Tracee,
     finality: Finality,
     recursion_level: u32,
     guest_path: &FixedPath,
     host_path: &mut FixedPath,
-) -> Result<bool, i32> {
+    known: Option<HostStat>,
+) -> Result<HostStat, i32> {
     host_path.set(guest_path.as_bytes());
     substitute_binding(tracee, Side::Guest, host_path)?;
+
+    let mut st: Option<libc::stat> = None;
+    let mut stat = match known {
+        Some(k) => k,
+        None if should_skip_file_access_due_to_f2fs_bug(tracee, host_path.as_bytes()) => {
+            crate::sys::set_errno(libc::ENOENT);
+            HostStat {
+                found: false,
+                mode: 0,
+            }
+        }
+        None => match crate::sys::lstat(host_path.as_c_str()) {
+            Ok(v) => {
+                st = Some(v);
+                HostStat {
+                    found: true,
+                    mode: v.st_mode,
+                }
+            }
+            Err(_) => HostStat {
+                found: false,
+                // /linkerconfig exists on Android but cannot be stat'ed.
+                mode: if crate::sys::errno() == libc::EACCES
+                    && host_path.as_bytes() == b"/linkerconfig"
+                {
+                    libc::S_IFDIR
+                } else {
+                    0
+                },
+            },
+        },
+    };
 
     // Don't notify extensions during the initialization of a binding.
     if tracee.glue_type == 0 {
@@ -63,56 +116,30 @@ fn substitute_binding_stat(
             tracee,
             host_path,
             finality.is_final() && recursion_level == 0,
+            st.as_ref(),
         );
         if status < 0 {
             return Err(status);
         }
     }
 
-    let mut st: libc::stat = crate::sys::zeroed();
-    let status;
-    if should_skip_file_access_due_to_f2fs_bug(tracee, host_path.as_bytes()) {
-        status = -1;
-        crate::sys::set_errno(libc::ENOENT);
-    } else {
-        status = match crate::sys::lstat(host_path.as_c_str()) {
-            Ok(v) => {
-                st = v;
-                0
-            }
-            Err(_) => -1,
-        };
-        // /linkerconfig exists on Android but cannot be stat'ed.
-        if status < 0
-            && crate::sys::errno() == libc::EACCES
-            && host_path.as_bytes() == b"/linkerconfig"
-        {
-            st.st_mode = libc::S_IFDIR;
-        }
-    }
-
     // Build the glue between hostfs and guestfs during binding init.
-    if status < 0 && tracee.glue_type != 0 {
-        let mode = crate::path::glue::build_glue(tracee, guest_path, host_path, finality);
-        if mode == 0 {
-            st.st_mode = 0;
-        } else {
-            st.st_mode = mode;
-        }
+    if !stat.found && tracee.glue_type != 0 {
+        stat.mode = crate::path::glue::build_glue(tracee, guest_path, host_path, finality);
     }
 
     if !finality.is_final()
-        && (st.st_mode & libc::S_IFMT) != libc::S_IFDIR
-        && (st.st_mode & libc::S_IFMT) != libc::S_IFLNK
+        && (stat.mode & libc::S_IFMT) != libc::S_IFDIR
+        && (stat.mode & libc::S_IFMT) != libc::S_IFLNK
     {
-        return Err(if status < 0 {
+        return Err(if !stat.found {
             -libc::ENOENT
         } else {
             -libc::ENOTDIR
         });
     }
 
-    Ok((st.st_mode & libc::S_IFMT) == libc::S_IFLNK)
+    Ok(stat)
 }
 
 /// `canonicalize()` — like realpath(3) in the guest namespace: resolve
@@ -126,7 +153,22 @@ pub fn canonicalize(
     guest_path: &mut FixedPath,
     recursion_level: u32,
 ) -> Result<(), i32> {
+    canonicalize_inner(tracee, user_path, deref_final, guest_path, recursion_level).map(|_| ())
+}
+
+/// `canonicalize()` proper.  Also returns what the lstat() of the final
+/// `guest_path` found, when this call made one, so that the caller
+/// resolving a symlink doesn't lstat the same path a second time.
+pub(crate) fn canonicalize_inner(
+    tracee: &mut Tracee,
+    user_path: &[u8],
+    deref_final: bool,
+    guest_path: &mut FixedPath,
+    recursion_level: u32,
+) -> Result<Option<HostStat>, i32> {
     let mut symlinks_followed = 0u32;
+    // The lstat() outcome for the current value of `guest_path`, if known.
+    let mut last: Option<HostStat> = None;
 
     if recursion_level > MAXSYMLINKS {
         return Err(-libc::ELOOP);
@@ -162,6 +204,7 @@ pub fn canonicalize(
         }
         if component == b".." {
             guest_path.pop_component();
+            last = None;
             if finality.is_final() {
                 finality = Finality::Slash;
             }
@@ -170,17 +213,20 @@ pub fn canonicalize(
 
         join_paths2(&mut scratch_path, guest_path.as_bytes(), component)?;
 
-        let is_link = substitute_binding_stat(
+        let stat = substitute_binding_stat(
             tracee,
             finality,
             recursion_level,
             &scratch_path,
             &mut host_path,
+            None,
         )?;
 
         // Nothing special unless it's a link we must dereference.
-        if !is_link || (finality == Finality::Normal && !deref_final) {
+        if !stat.is_link() || (finality == Finality::Normal && !deref_final) {
             guest_path.push_component(component)?;
+            debug_assert_eq!(guest_path.as_bytes(), scratch_path.as_bytes());
+            last = Some(stat);
             continue;
         }
 
@@ -215,7 +261,7 @@ pub fn canonicalize(
                         Action::DontCanonicalize => {
                             if finality == Finality::Normal {
                                 guest_path.set(scratch_path.as_bytes());
-                                return Ok(());
+                                return Ok(None);
                             }
                             // Otherwise fall through to the real readlink.
                         }
@@ -251,7 +297,7 @@ pub fn canonicalize(
         // 'canon': recursively canonicalize the referree, relative to
         // guest_path when not absolute.
         symlinks_followed += 1;
-        canonicalize(
+        let referree = canonicalize_inner(
             tracee,
             scratch_path.as_bytes(),
             true,
@@ -260,7 +306,21 @@ pub fn canonicalize(
         )?;
 
         // A non-final canonicalized component must exist and be a directory.
-        substitute_binding_stat(tracee, finality, recursion_level, guest_path, &mut hp)?;
+        // The recursion usually just lstat'ed this very path; glue building
+        // has side effects, so it always gets a fresh look.
+        let known = if tracee.glue_type == 0 {
+            referree
+        } else {
+            None
+        };
+        last = Some(substitute_binding_stat(
+            tracee,
+            finality,
+            recursion_level,
+            guest_path,
+            &mut hp,
+            known,
+        )?);
     }
 
     if recursion_level == 0 {
@@ -270,9 +330,12 @@ pub fn canonicalize(
             Finality::Dot => guest_path.push_component(b".")?,
             _ => return Err(-libc::EINVAL),
         }
+        if finality != Finality::Normal {
+            return Ok(None);
+        }
     }
 
-    Ok(())
+    Ok(last)
 }
 
 /// `next_component` helper for callers (binding init etc.) that want the

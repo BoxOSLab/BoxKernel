@@ -172,6 +172,11 @@ pub struct Tracee {
     /// fd the tracee used to open /proc/self/auxv (-1 = inactive).
     pub auxv_fd: i32,
 
+    /// The last path argument the sysenter stage of the current syscall
+    /// translated, so its sysexit stage needn't read it back from tracee
+    /// memory or translate it again.  Reset at every sysenter.
+    pub enter_path: Option<EnterPath>,
+
     // ---- inherited private resources ----
     pub verbose: i32,
     pub seccomp: Seccomp,
@@ -211,6 +216,25 @@ pub struct Tracee {
     /// [`get_tracee`] when the tracee is fetched for a new event (the C
     /// code frees `tracee->ctx` at the same boundary).
     pub deferred: Vec<Box<dyn FnOnce()>>,
+}
+
+/// A path argument translated at sysenter (see [`Tracee::enter_path`]).
+pub struct EnterPath {
+    /// Where the host path was written in the tracee: the sysarg's new value.
+    pub addr: Word,
+    pub host_path: crate::fpath::PathGuard,
+    /// Whether the final component of `host_path` is a symlink, if known.
+    pub is_link: Option<bool>,
+}
+
+impl Tracee {
+    /// The host path the sysenter stage wrote for `reg`, provided `reg`
+    /// still points to it.
+    pub fn enter_path(&self, reg: crate::tracee::reg::Reg) -> Option<&EnterPath> {
+        let addr =
+            crate::tracee::reg::peek_reg(self, crate::tracee::reg::RegVersion::Modified, reg);
+        self.enter_path.as_ref().filter(|p| p.addr == addr)
+    }
 }
 
 /// Bookkeeping saved between execve sysenter and sysexit.
@@ -258,6 +282,7 @@ impl Default for Tracee {
             load_info: None,
             execfn_addr: 0,
             auxv_fd: -1,
+            enter_path: None,
             verbose: 0,
             seccomp: Seccomp::Disabled,
             sysexit_pending: false,

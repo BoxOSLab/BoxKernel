@@ -46,11 +46,14 @@ To run it against the Rust binary:
 
 ```console
 $ cd ../proot/tests               # the C reference checkout
-$ make -C . test PROOT=/path/to/BoxKernel/target/release/proot
+$ make -C . check PROOT=/path/to/BoxKernel/target/release/proot
 ```
 
-Expected result: **113 ok, 0 failed**, 8 skipped, 9 xfail (environment
-dependent). A change is not done until this suite is green.
+Record the reference commit (`git rev-parse HEAD`) with the result:
+test counts change as upstream adds coverage. The target is **0 failed**;
+optional tools may cause skips. A change is not done until this suite is
+green. Current compatibility gaps and the performance baseline comparison
+are recorded in [the performance report](docs/src/performance.md#validation).
 
 ## Code quality gates
 

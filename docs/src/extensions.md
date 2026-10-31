@@ -10,9 +10,9 @@ translation*. Everything the C code did with
 ```rust
 pub enum Event<'a> {
     GuestPath   { base: &'a mut FixedPath, path: &'a [u8] },
-    HostPath    { path: &'a mut FixedPath, is_final: bool },
+    HostPath    { path: &'a FixedPath, is_final: bool, lstat: Option<&'a libc::stat> },
     SymlinkDeref{ link: &'a FixedPath, referree: &'a mut FixedPath },
-    TranslatedPath { path: &'a mut FixedPath },
+    TranslatedPath { path: &'a mut FixedPath, is_link: Option<bool> },
     SysEnterStart, SysEnterEnd   { status: i32 },
     SysExitStart,  SysExitEnd    { status: i32 },
     NewStatus     { status: i32 },
@@ -38,6 +38,11 @@ impl AnyExtension {
 
 Return value convention follows C: `< 0` aborts the operation,
 `0` continues, `> 0` requests the *child-side* inherit callback.
+
+`HostPath.lstat` shares the canonicalizer's metadata for that component.
+`TranslatedPath.is_link` carries what it knows about the final component;
+an extension that changes the path must update that hint or clear it to
+`None`.
 
 ## Inheritance model
 

@@ -5,7 +5,7 @@
 //! call failed but PRoot can still answer it (e.g. old kernels).
 
 use crate::Word;
-use crate::fpath::{FixedPath, PathGuard};
+use crate::fpath::PathGuard;
 use crate::tracee::Tracee;
 use crate::tracee::mem::{read_data, read_string, write_data};
 use crate::tracee::reg::{Reg, RegVersion, peek_reg};
@@ -49,7 +49,7 @@ pub struct Statx {
 /// `statx_syscall_state` — STATX_SYSCALL event payload.
 #[derive(Default)]
 pub struct StatxSyscallState {
-    pub host_path: FixedPath,
+    pub host_path: PathGuard,
     pub statx_buf: Statx,
     pub updated_stats: bool,
 }
@@ -86,6 +86,18 @@ pub fn handle_statx_syscall(tracee: &mut Tracee, from_sigsys: bool) -> i32 {
     let mut state = StatxSyscallState::default();
     let mut guest_path = PathGuard::new();
     let mut do_fstat = false;
+
+    // The kernel succeeded with the path the sysenter stage translated:
+    // hand that one to the extensions rather than translating it again.
+    // (A failure is answered below by a tracer-side stat that relies on
+    // the side effects of a fresh translation, e.g. fake_id0's
+    // permission overrides.)
+    if !from_sigsys && peek_reg(tracee, RegVersion::Current, Reg::SysargResult) == 0 {
+        if let Some(p) = tracee.enter_path(Reg::Sysarg2) {
+            state.host_path.set(p.host_path.as_bytes());
+            return finish_statx_syscall(tracee, &mut state);
+        }
+    }
 
     // Read arguments and translate the path.
     let flags = peek_reg(tracee, rv, Reg::Sysarg3);
@@ -211,29 +223,36 @@ pub fn handle_statx_syscall(tracee: &mut Tracee, from_sigsys: bool) -> i32 {
         state.statx_buf.stx_rdev_minor = libc::minor(sb.st_rdev) as u32;
         state.updated_stats = true;
     } else {
-        // The kernel wrote the result; read it back so extensions can
-        // inspect/falsify it.
-        status = read_data(
-            tracee,
-            crate::sys::as_bytes_mut(&mut state.statx_buf),
-            peek_reg(tracee, RegVersion::Original, Reg::Sysarg5),
-        );
-        if status < 0 {
-            return status;
-        }
+        return finish_statx_syscall(tracee, &mut state);
     }
 
-    // Notify extensions (STATX_SYSCALL).
-    status = crate::extension::notify(
+    notify_statx_syscall(tracee, &mut state)
+}
+
+/// The kernel wrote the result; read it back so extensions can
+/// inspect/falsify it.
+fn finish_statx_syscall(tracee: &mut Tracee, state: &mut StatxSyscallState) -> i32 {
+    let status = read_data(
         tracee,
-        &mut crate::extension::Event::StatxSyscall { state: &mut state },
+        crate::sys::as_bytes_mut(&mut state.statx_buf),
+        peek_reg(tracee, RegVersion::Original, Reg::Sysarg5),
     );
+    if status < 0 {
+        return status;
+    }
+    notify_statx_syscall(tracee, state)
+}
+
+/// Notify extensions (STATX_SYSCALL), then write back what they changed.
+fn notify_statx_syscall(tracee: &mut Tracee, state: &mut StatxSyscallState) -> i32 {
+    let status =
+        crate::extension::notify(tracee, &mut crate::extension::Event::StatxSyscall { state });
     if status < 0 {
         return status;
     }
 
     if state.updated_stats {
-        status = write_data(
+        let status = write_data(
             tracee,
             peek_reg(tracee, RegVersion::Current, Reg::Sysarg5),
             crate::sys::as_bytes(&state.statx_buf),

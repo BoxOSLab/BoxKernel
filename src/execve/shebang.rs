@@ -30,11 +30,14 @@ pub fn translate_and_check_exec(
         return e;
     }
     let c = host_path.as_c_str();
-    if crate::sys::access(c, libc::F_OK) < 0 {
-        return -libc::ENOENT;
-    }
+    // A successful X_OK implies the path resolves, so F_OK is only needed to
+    // tell "missing" (-ENOENT) from "present but not executable" (-EACCES).
     if crate::sys::access(c, libc::X_OK) < 0 {
-        return -libc::EACCES;
+        return if crate::sys::access(c, libc::F_OK) < 0 {
+            -libc::ENOENT
+        } else {
+            -libc::EACCES
+        };
     }
     if crate::sys::lstat(c).is_err() {
         return -libc::EPERM;
@@ -57,26 +60,69 @@ fn extract_shebang(host_path: &FixedPath) -> Shebang {
     result
 }
 
-fn extract_shebang_fd(fd: i32) -> Shebang {
-    let read1 = |fd: i32| -> Result<u8, i32> {
-        let mut b = [0u8; 1];
-        let n = crate::sys::read(fd, &mut b);
-        if n < 0 {
-            Err(-crate::sys::errno())
-        } else if n == 0 {
-            Err(0) // sentinel: EOF
-        } else {
-            Ok(b[0])
+/// The first `BINPRM_BUF_SIZE` bytes of a file, fetched as few `read(2)`s as
+/// possible.
+///
+/// Regular files can be read ahead. Streams must keep the exact read sizes
+/// of the C parser: opening /proc/self/fd/N on a pipe shares its contents
+/// with the interpreter, so consuming the script body would lose it.
+struct Prefix {
+    fd: i32,
+    buf: [u8; BINPRM_BUF_SIZE],
+    len: usize,
+    eof: bool,
+    read_ahead: bool,
+}
+
+impl Prefix {
+    fn new(fd: i32) -> Self {
+        Prefix {
+            fd,
+            buf: [0; BINPRM_BUF_SIZE],
+            len: 0,
+            eof: false,
+            read_ahead: crate::sys::fstat(fd)
+                .is_ok_and(|st| (st.st_mode & libc::S_IFMT) == libc::S_IFREG),
         }
-    };
+    }
+
+    /// One `read(2)` into the unused tail of the buffer.  Returns the number
+    /// of bytes read, 0 at end of file.
+    fn fill(&mut self) -> Result<usize, i32> {
+        debug_assert!(self.len < BINPRM_BUF_SIZE);
+        let end = if self.read_ahead {
+            BINPRM_BUF_SIZE
+        } else {
+            self.len + if self.len == 0 { 2 } else { 1 }
+        };
+        let n = crate::sys::read(self.fd, &mut self.buf[self.len..end]);
+        if n < 0 {
+            return Err(-crate::sys::errno());
+        }
+        self.len += n as usize;
+        Ok(n as usize)
+    }
+
+    /// Byte at `idx` (`idx < BINPRM_BUF_SIZE`), reading from the file only if
+    /// it is not buffered yet.  `Ok(None)` at end of file.
+    fn byte_at(&mut self, idx: usize) -> Result<Option<u8>, i32> {
+        while idx >= self.len {
+            if self.eof {
+                return Ok(None);
+            }
+            if self.fill()? == 0 {
+                self.eof = true;
+            }
+        }
+        Ok(Some(self.buf[idx]))
+    }
+}
+
+fn extract_shebang_fd(fd: i32) -> Shebang {
+    let mut prefix = Prefix::new(fd);
 
     // Read "#!".
-    let mut magic = [0u8; 2];
-    let n = crate::sys::read(fd, &mut magic);
-    if n < 0 {
-        return Err(-crate::sys::errno());
-    }
-    if n < 2 || magic[0] != b'#' || magic[1] != b'!' {
+    if prefix.fill()? < 2 || prefix.buf[0] != b'#' || prefix.buf[1] != b'!' {
         return Ok(None);
     }
     let mut current_length = 2usize;
@@ -86,10 +132,9 @@ fn extract_shebang_fd(fd: i32) -> Shebang {
 
     // Skip leading blanks.
     let mut tmp = loop {
-        match read1(fd) {
-            Err(0) => return Err(-libc::ENOEXEC),
-            Err(e) => return Err(e),
-            Ok(b) => {
+        match prefix.byte_at(current_length)? {
+            None => return Err(-libc::ENOEXEC),
+            Some(b) => {
                 current_length += 1;
                 if (b != b' ' && b != b'\t') || current_length >= BINPRM_BUF_SIZE {
                     break b;
@@ -117,13 +162,12 @@ fn extract_shebang_fd(fd: i32) -> Shebang {
                 user_path.push(tmp);
             }
         }
-        match read1(fd) {
-            Err(0) => {
+        match prefix.byte_at(current_length)? {
+            None => {
                 done = true;
                 break;
             }
-            Err(e) => return Err(e),
-            Ok(b) => {
+            Some(b) => {
                 tmp = b;
                 current_length += 1;
                 i += 1;
@@ -146,13 +190,12 @@ fn extract_shebang_fd(fd: i32) -> Shebang {
             break;
         }
         argument.push(tmp);
-        match read1(fd) {
-            Err(0) => {
+        match prefix.byte_at(current_length)? {
+            None => {
                 strip_nul(&mut user_path);
                 return Ok(Some((user_path, Vec::new())));
             }
-            Err(e) => return Err(e),
-            Ok(b) => {
+            Some(b) => {
                 tmp = b;
                 current_length += 1;
             }
@@ -184,14 +227,15 @@ pub fn expand_shebang(
     let mut has_shebang = false;
     let mut no_more = false;
 
-    for _ in 0..MAX_SHEBANG_DEPTH {
-        // Translate + validate the current candidate.
-        let status = translate_and_check_exec(tracee, host_path, user_path.as_bytes());
-        if status < 0 {
-            return Err(status);
-        }
-        let old_user_path = user_path.as_bytes().to_vec();
+    // The original path is validated once up front.  From then on every
+    // candidate is an interpreter, and it is validated once, when it becomes
+    // the candidate (not again at the top of the next iteration).
+    let status = translate_and_check_exec(tracee, host_path, user_path.as_bytes());
+    if status < 0 {
+        return Err(status);
+    }
 
+    for _ in 0..MAX_SHEBANG_DEPTH {
         match extract_shebang(host_path)? {
             None => {
                 no_more = true;
@@ -199,9 +243,10 @@ pub fn expand_shebang(
             }
             Some((interp, argument)) => {
                 has_shebang = true;
+                let old_user_path = user_path.as_bytes().to_vec();
                 user_path.set(&interp);
 
-                // Translate + validate the interpreter itself.
+                // Translate + validate the interpreter (the next candidate).
                 let status = translate_and_check_exec(tracee, host_path, user_path.as_bytes());
                 if status < 0 {
                     return Err(status);
@@ -242,6 +287,8 @@ pub fn expand_shebang(
 mod tests {
     use super::*;
     use crate::testutil::{TempDir, test_tracee};
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
 
     fn extract(content: &[u8]) -> Shebang {
         let td = TempDir::new("shebang");
@@ -371,5 +418,110 @@ mod tests {
         // Directory -> access(X_OK) succeeds on dirs (traversable), so
         // it passes the exec-check stage just like C (execve fails later).
         assert_eq!(translate_and_check_exec(&mut t, &mut h, b"/"), 0);
+    }
+
+    #[test]
+    fn crlf_terminators() {
+        assert_eq!(
+            shebang_of(b"#!/bin/sh\r\n"),
+            Some((b"/bin/sh".to_vec(), Vec::new()))
+        );
+        assert_eq!(
+            shebang_of(b"#!/bin/sh -x\r\nprint(1)\n"),
+            Some((b"/bin/sh".to_vec(), b"-x".to_vec()))
+        );
+    }
+
+    #[test]
+    fn overlong_interpreter_is_cut_at_buffer_size() {
+        // Only the first BINPRM_BUF_SIZE bytes are looked at: '/' plus the
+        // 252 'a' that occupy indices 3..=254.
+        let mut content = b"#!/".to_vec();
+        content.extend(std::iter::repeat_n(b'a', 300));
+        let mut want = b"/".to_vec();
+        want.extend(std::iter::repeat_n(b'a', 252));
+        assert_eq!(shebang_of(&content), Some((want, Vec::new())));
+    }
+
+    #[test]
+    fn overlong_argument_is_cut_at_buffer_size() {
+        // The argument starts at index 10 and runs through index 254.
+        let mut content = b"#!/bin/sh ".to_vec();
+        content.extend(std::iter::repeat_n(b'x', 300));
+        assert_eq!(
+            shebang_of(&content),
+            Some((b"/bin/sh".to_vec(), vec![b'x'; 245]))
+        );
+    }
+
+    /// Feed `chunks` through a socket pair, one `write` each, and parse the
+    /// shebang from the read end.  The peer closes its end when done, so the
+    /// parser sees end of file after the last chunk.
+    fn extract_streamed(chunks: &[&str]) -> Shebang {
+        use std::io::Write;
+        use std::os::fd::IntoRawFd;
+        let (mut tx, rx) = UnixStream::pair().unwrap();
+        rx.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let owned: Vec<Vec<u8>> = chunks.iter().map(|c| c.as_bytes().to_vec()).collect();
+        let peer = std::thread::spawn(move || {
+            for c in owned {
+                if tx.write_all(&c).is_err() {
+                    return;
+                }
+            }
+        });
+        let fd = rx.into_raw_fd();
+        let r = extract_shebang_fd(fd);
+        crate::sys::close(fd);
+        peer.join().unwrap();
+        r
+    }
+
+    #[test]
+    fn streamed_line_is_joined_across_reads() {
+        assert_eq!(
+            extract_streamed(&["#!/bin/", "sh -x\n"]),
+            Ok(Some((b"/bin/sh".to_vec(), b"-x".to_vec())))
+        );
+        // EOF inside the argument drops the partial argument (see
+        // `eof_without_newline`).
+        assert_eq!(
+            extract_streamed(&["#!/bin/sh", " -x"]),
+            Ok(Some((b"/bin/sh".to_vec(), Vec::new())))
+        );
+    }
+
+    #[test]
+    fn parser_does_not_read_past_the_line() {
+        // The writer keeps its end open, so a read past the newline would
+        // block; the read timeout turns that into an error instead of a hang.
+        use std::io::Write;
+        use std::os::fd::IntoRawFd;
+        let (mut tx, rx) = UnixStream::pair().unwrap();
+        rx.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        tx.write_all(b"#!/bin/sh -x\n").unwrap();
+        let fd = rx.into_raw_fd();
+        let r = extract_shebang_fd(fd);
+        crate::sys::close(fd);
+        assert_eq!(r, Ok(Some((b"/bin/sh".to_vec(), b"-x".to_vec()))));
+        drop(tx);
+    }
+
+    #[test]
+    fn streamed_script_body_remains_unread() {
+        use std::io::Write;
+        use std::os::fd::IntoRawFd;
+        let (mut tx, rx) = UnixStream::pair().unwrap();
+        rx.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        tx.write_all(b"#!/bin/sh\necho script-body\n").unwrap();
+        let fd = rx.into_raw_fd();
+        assert_eq!(
+            extract_shebang_fd(fd),
+            Ok(Some((b"/bin/sh".to_vec(), Vec::new())))
+        );
+        let mut remaining = [0u8; 17];
+        assert_eq!(crate::sys::read(fd, &mut remaining), 17);
+        crate::sys::close(fd);
+        assert_eq!(&remaining, b"echo script-body\n");
     }
 }

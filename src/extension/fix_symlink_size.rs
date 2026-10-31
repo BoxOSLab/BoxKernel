@@ -65,6 +65,13 @@ fn handle_sysexit_end(tracee: &mut Tracee) -> i32 {
     if peek_reg(tracee, RegVersion::Current, Reg::SysargResult) != 0 {
         return 0;
     }
+    // The sysenter stage already knows the path isn't a symlink.
+    if tracee
+        .enter_path(sysarg_path)
+        .is_some_and(|p| p.is_link == Some(false))
+    {
+        return 0;
+    }
 
     // Read the (translated) host path — link2symlink will already have
     // resolved any fake hard link, so a symlink here is a real one.

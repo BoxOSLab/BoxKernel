@@ -51,20 +51,46 @@ fn force_fork_sysexit(tracee: &mut Tracee) {
 /// `translate_path2()` — translate `path` and write the host path back into
 /// the tracee's `reg` argument.
 fn translate_path2(tracee: &mut Tracee, dir_fd: i32, path: &FixedPath, reg: Reg, ty: PType) -> i32 {
+    let mut new_path = PathGuard::new();
+    translate_path2_into(tracee, dir_fd, path, reg, ty, &mut new_path)
+}
+
+/// `translate_path2()` that also hands the host path it wrote back to the
+/// caller in `new_path` (left empty when `path` is), sparing a read-back
+/// from tracee memory.
+fn translate_path2_into(
+    tracee: &mut Tracee,
+    dir_fd: i32,
+    path: &FixedPath,
+    reg: Reg,
+    ty: PType,
+    new_path: &mut FixedPath,
+) -> i32 {
     if path.is_empty() {
+        new_path.set(b"");
         return 0;
     }
-    let mut new_path = PathGuard::new();
-    match crate::path::translate_path(
+    let is_link = match crate::path::translate_path_ext(
         tracee,
-        &mut new_path,
+        new_path,
         dir_fd,
         path.as_bytes(),
         ty == PType::Regular,
     ) {
-        Err(e) => e,
-        Ok(()) => set_sysarg_path(tracee, new_path.as_bytes(), reg),
+        Err(e) => return e,
+        Ok(l) => l,
+    };
+    let status = set_sysarg_path(tracee, new_path.as_bytes(), reg);
+    if status >= 0 {
+        let mut host_path = PathGuard::new();
+        host_path.set(new_path.as_bytes());
+        tracee.enter_path = Some(crate::tracee::EnterPath {
+            addr: peek_reg(tracee, RegVersion::Current, reg),
+            host_path,
+            is_link,
+        });
     }
+    status
 }
 
 /// `translate_path2_parent()` — translate the parent directory only; the
@@ -377,12 +403,9 @@ fn is_proc_userns_file(path: &[u8]) -> bool {
 
 /// `maybe_redirect_userns_file()` — writes to the userns setup files are
 /// silently redirected to /dev/null (the tracee can't really create them).
-fn maybe_redirect_userns_file(tracee: &mut Tracee, reg: Reg) {
-    let mut host_path = PathGuard::new();
-    if get_sysarg_path(tracee, &mut host_path, reg) < 0 {
-        return;
-    }
-    if !is_proc_userns_file(host_path.as_bytes()) {
+/// `host_path` is what `reg` currently points to.
+fn maybe_redirect_userns_file(tracee: &mut Tracee, host_path: &[u8], reg: Reg) {
+    if !is_proc_userns_file(host_path) {
         return;
     }
     let _ = set_sysarg_path(tracee, b"/dev/null", reg);
@@ -394,6 +417,8 @@ fn maybe_redirect_userns_file(tracee: &mut Tracee, reg: Reg) {
 
 /// `translate_syscall_enter()`.
 pub fn translate_syscall_enter(tracee: &mut Tracee) -> i32 {
+    tracee.enter_path = None;
+
     let mut path = PathGuard::new();
     let mut oldpath = PathGuard::new();
     let mut newpath = PathGuard::new();
@@ -858,30 +883,31 @@ pub fn translate_syscall_enter(tracee: &mut Tracee) -> i32 {
         }
         Sysnum::open => {
             let flags = peek_reg(tracee, RegVersion::Current, Reg::Sysarg2);
-            if tracee.execfn_addr != 0 {
-                let mut p = PathGuard::new();
-                let n = read_string(
-                    tracee,
-                    p.as_mut_bytes(),
-                    peek_reg(tracee, RegVersion::Current, Reg::Sysarg1),
-                );
-                if n > 0 {
-                    p.sync_len_from_nul();
-                }
-                if n > 0 && p.as_bytes() == b"/proc/self/auxv" {
+            status = get_sysarg_path(tracee, &mut path, Reg::Sysarg1);
+            if status >= 0 {
+                if tracee.execfn_addr != 0 && path.as_bytes() == b"/proc/self/auxv" {
                     tracee.sysexit_pending = true;
                     tracee.restart_how = crate::ptrace::ptc::PTRACE_SYSCALL;
                 }
-            }
-            if (flags & libc::O_NOFOLLOW as Word) != 0
-                || ((flags & libc::O_EXCL as Word) != 0 && (flags & libc::O_CREAT as Word) != 0)
-            {
-                status = translate_sysarg(tracee, Reg::Sysarg1, PType::Symlink);
-            } else {
-                status = translate_sysarg(tracee, Reg::Sysarg1, PType::Regular);
-            }
-            if status >= 0 {
-                maybe_redirect_userns_file(tracee, Reg::Sysarg1);
+                let ty = if (flags & libc::O_NOFOLLOW as Word) != 0
+                    || ((flags & libc::O_EXCL as Word) != 0 && (flags & libc::O_CREAT as Word) != 0)
+                {
+                    PType::Symlink
+                } else {
+                    PType::Regular
+                };
+                let mut host_path = PathGuard::new();
+                status = translate_path2_into(
+                    tracee,
+                    libc::AT_FDCWD,
+                    &path,
+                    Reg::Sysarg1,
+                    ty,
+                    &mut host_path,
+                );
+                if status >= 0 {
+                    maybe_redirect_userns_file(tracee, host_path.as_bytes(), Reg::Sysarg1);
+                }
             }
         }
         Sysnum::fchownat
@@ -1196,9 +1222,10 @@ fn openat_enter(tracee: &mut Tracee, path: &mut FixedPath) -> i32 {
     } else {
         PType::Regular
     };
-    let status = translate_path2(tracee, dirfd, path, Reg::Sysarg2, ty);
+    let mut host_path = PathGuard::new();
+    let status = translate_path2_into(tracee, dirfd, path, Reg::Sysarg2, ty, &mut host_path);
     if status >= 0 {
-        maybe_redirect_userns_file(tracee, Reg::Sysarg2);
+        maybe_redirect_userns_file(tracee, host_path.as_bytes(), Reg::Sysarg2);
     }
     status
 }

@@ -1422,7 +1422,14 @@ fn handle_getresgid_exit(tracee: &mut Tracee, config: &Config) -> i32 {
 
 /// `override_permissions()` — force rwx on a path component during path
 /// translation (CAP_DAC_OVERRIDE emulation); restoration is deferred.
-fn override_permissions(tracee: &mut Tracee, path: &[u8], is_final: bool) {
+/// `lstat` is the caller's lstat(2) of `path`, if any: unless `path` is a
+/// symlink it is exactly what stat(2) would report, so it saves a syscall.
+fn override_permissions(
+    tracee: &mut Tracee,
+    path: &[u8],
+    is_final: bool,
+    lstat: Option<&libc::stat>,
+) {
     if crate::path::f2fs::should_skip_file_access_due_to_f2fs_bug(tracee, path) {
         return;
     }
@@ -1430,9 +1437,12 @@ fn override_permissions(tracee: &mut Tracee, path: &[u8], is_final: bool) {
         Ok(c) => c,
         Err(_) => return,
     };
-    let perms = match crate::sys::stat(&c) {
-        Ok(s) => s,
-        Err(_) => return,
+    let perms = match lstat {
+        Some(st) if (st.st_mode & libc::S_IFMT) != libc::S_IFLNK => *st,
+        _ => match crate::sys::stat(&c) {
+            Ok(s) => s,
+            Err(_) => return,
+        },
     };
 
     let mut new_mode = perms.st_mode & (libc::S_IRWXU | libc::S_IRWXG | libc::S_IRWXO);
@@ -1791,22 +1801,27 @@ fn handle_stat_exit_simple(tracee: &mut Tracee, config: &Config, stat_sysarg: Re
     if result != 0 {
         return 0;
     }
-    let address = peek_reg(tracee, RegVersion::Original, stat_sysarg);
-    let uid = peek_uint32(tracee, address + offsetof_stat_uid(tracee) as Word);
-    let gid = peek_uint32(tracee, address + offsetof_stat_gid(tracee) as Word);
-    if uid == crate::sys::getuid() {
-        poke_uint32(
-            tracee,
-            address + offsetof_stat_uid(tracee) as Word,
-            config.suid,
-        );
+    // st_gid follows st_uid in every `struct stat` layout: one remote read
+    // and at most one remote write cover both.
+    let ids_addr =
+        peek_reg(tracee, RegVersion::Original, stat_sysarg) + offsetof_stat_uid(tracee) as Word;
+    debug_assert_eq!(offsetof_stat_gid(tracee), offsetof_stat_uid(tracee) + 4);
+    let mut ids = [0u8; 8];
+    if read_data(tracee, &mut ids, ids_addr) < 0 {
+        return 0;
     }
-    if gid == crate::sys::getgid() {
-        poke_uint32(
-            tracee,
-            address + offsetof_stat_gid(tracee) as Word,
-            config.sgid,
-        );
+    let (uid, gid) = ids.split_at_mut(4);
+    let mut changed = false;
+    if u32::from_ne_bytes((*uid).try_into().unwrap()) == crate::sys::getuid() {
+        uid.copy_from_slice(&config.suid.to_ne_bytes());
+        changed = true;
+    }
+    if u32::from_ne_bytes((*gid).try_into().unwrap()) == crate::sys::getgid() {
+        gid.copy_from_slice(&config.sgid.to_ne_bytes());
+        changed = true;
+    }
+    if changed {
+        write_data(tracee, ids_addr, &ids);
     }
     0
 }
@@ -2429,10 +2444,13 @@ impl FakeId0 {
 
             Event::InheritChild { .. } => 0, // config was cloned already
 
-            Event::HostPath { path, is_final } => {
+            Event::HostPath {
+                path,
+                is_final,
+                lstat,
+            } => {
                 if self.config.euid == 0 {
-                    let p = path.as_bytes().to_vec();
-                    override_permissions(tracee, &p, *is_final);
+                    override_permissions(tracee, path.as_bytes(), *is_final, *lstat);
                 }
                 0
             }

@@ -266,10 +266,11 @@ impl Default for FixedPath {
 // spent buffers keeps the zeroing a warm-up cost — `set()`-family writes
 // overwrite whatever they need, so a dirty buffer is as good as a fresh
 // one.  The event loop is single-threaded, so a thread_local Vec is all
-// the synchronization this needs.
+// the synchronization this needs.  Buffers are boxed so that checking one
+// out or back in moves a pointer, not PATH_MAX bytes.
 
 thread_local! {
-    static PATH_POOL: std::cell::RefCell<Vec<FixedPath>> =
+    static PATH_POOL: std::cell::RefCell<Vec<Box<FixedPath>>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 const PATH_POOL_MAX: usize = 16;
@@ -279,7 +280,7 @@ const PATH_POOL_MAX: usize = 16;
 /// pass `&mut *guard` / `&*guard` where a `&mut FixedPath`/`&FixedPath`
 /// is required.
 pub struct PathGuard {
-    inner: Option<FixedPath>,
+    inner: Option<Box<FixedPath>>,
 }
 
 impl PathGuard {

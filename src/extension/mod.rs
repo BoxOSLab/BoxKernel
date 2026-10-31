@@ -29,18 +29,25 @@ pub enum Event<'a> {
         path: &'a [u8],
     },
     /// data1 = canonicalized host path; data2 = last iteration.
+    /// `lstat` is the canonicalizer's own lstat(2) of `path`, taken just
+    /// before this event, when it has one: extensions reuse it instead of
+    /// stat'ing the same component again.
     HostPath {
-        path: &'a mut FixedPath,
+        path: &'a FixedPath,
         is_final: bool,
+        lstat: Option<&'a libc::stat>,
     },
     /// data1 = link host path; data2 = link content (mutable).
     SymlinkDeref {
         link: &'a FixedPath,
         referree: &'a mut FixedPath,
     },
-    /// data1 = translated host path (mutable).
+    /// data1 = translated host path (mutable).  `is_link` tells whether
+    /// its final component is a symlink, when the canonicalizer knows; an
+    /// extension that rewrites `path` resets it to `None`.
     TranslatedPath {
         path: &'a mut FixedPath,
+        is_link: Option<bool>,
     },
     SysEnterStart,
     SysEnterEnd {
@@ -184,8 +191,20 @@ pub fn notify_guest_path(tracee: &mut Tracee, base: &mut FixedPath, path: &[u8])
     notify(tracee, &mut Event::GuestPath { base, path })
 }
 
-pub fn notify_host_path(tracee: &mut Tracee, path: &mut FixedPath, is_final: bool) -> i32 {
-    notify(tracee, &mut Event::HostPath { path, is_final })
+pub fn notify_host_path(
+    tracee: &mut Tracee,
+    path: &FixedPath,
+    is_final: bool,
+    lstat: Option<&libc::stat>,
+) -> i32 {
+    notify(
+        tracee,
+        &mut Event::HostPath {
+            path,
+            is_final,
+            lstat,
+        },
+    )
 }
 
 pub fn notify_symlink_deref(
@@ -196,9 +215,19 @@ pub fn notify_symlink_deref(
     notify(tracee, &mut Event::SymlinkDeref { link, referree })
 }
 
-pub fn notify_translated_path(tracee: &mut Tracee, path: &mut FixedPath) -> Result<(), i32> {
-    match notify(tracee, &mut Event::TranslatedPath { path }) {
-        0 => Ok(()),
+/// Returns what is still known of the final component of `path` (see
+/// [`Event::TranslatedPath`]).
+pub fn notify_translated_path(
+    tracee: &mut Tracee,
+    path: &mut FixedPath,
+    is_link: Option<bool>,
+) -> Result<Option<bool>, i32> {
+    let mut event = Event::TranslatedPath { path, is_link };
+    match notify(tracee, &mut event) {
+        0 => match event {
+            Event::TranslatedPath { is_link, .. } => Ok(is_link),
+            _ => unreachable!(),
+        },
         e => Err(e),
     }
 }

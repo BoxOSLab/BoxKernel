@@ -194,7 +194,7 @@ fn check_open_path(tracee: &mut Tracee, path: &mut FixedPath) {
 impl Mountinfo {
     pub fn callback(&mut self, tracee: &mut Tracee, event: &mut Event) -> i32 {
         match event {
-            Event::TranslatedPath { path } => {
+            Event::TranslatedPath { path, .. } => {
                 let num = get_sysnum(tracee, RegVersion::Original);
                 if num == Sysnum::open || num == Sysnum::openat {
                     check_open_path(tracee, path);

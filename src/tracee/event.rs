@@ -4,7 +4,7 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use crate::Word;
 use crate::sysnum::Sysnum;
@@ -17,34 +17,12 @@ pub type TraceeRef = Rc<RefCell<Tracee>>;
 // Seccomp/kernel capability probing
 // ==================================================================
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum EventmsgState {
-    Unknown,
-    Reliable,
-    Lost,
-}
-
 static SECCOMP_AFTER_PTRACE_ENTER: AtomicBool = AtomicBool::new(false);
 static SECCOMP_PTRACE_EVENT_SUPPORTED: AtomicBool = AtomicBool::new(false);
-static EVENTMSG_STATE: AtomicU8 = AtomicU8::new(EventmsgState::Unknown as u8);
 static SECCOMP_DETECTED: AtomicBool = AtomicBool::new(false);
 static SECCOMP_AFTER_PTRACE_ENTER_CHECKED: AtomicBool = AtomicBool::new(false);
 static DELIVER_SIGTRAP: AtomicBool = AtomicBool::new(false);
 static LAST_EXIT_STATUS: AtomicI32 = AtomicI32::new(-1);
-
-impl EventmsgState {
-    fn load() -> EventmsgState {
-        match EVENTMSG_STATE.load(Ordering::Relaxed) {
-            1 => EventmsgState::Reliable,
-            2 => EventmsgState::Lost,
-            _ => EventmsgState::Unknown,
-        }
-    }
-
-    fn store(self) {
-        EVENTMSG_STATE.store(self as u8, Ordering::Relaxed);
-    }
-}
 
 /// Whether the kernel is new enough to generate PTRACE_EVENT_SECCOMP stops.
 fn kernel_supports_ptrace_event_seccomp() -> bool {
@@ -643,40 +621,24 @@ fn handle_seccomp_stop(tracee: &mut Tracee, sysexit_necessary: bool) -> i32 {
         return signal;
     }
 
-    let mut flags: Word = match crate::sys::ptrace_geteventmsg(tracee.pid) {
-        Ok(v) => v as Word,
-        Err(_) => return signal,
-    };
-
-    // Kernels that lose event messages: reconstruct flags from the filter.
-    if EventmsgState::load() != EventmsgState::Reliable && fetch_regs(tracee) >= 0 {
-        let expected = crate::syscall::seccomp::filtered_sysnum_flags(
-            tracee,
-            get_sysnum(tracee, RegVersion::Current),
-        );
-        if EventmsgState::load() == EventmsgState::Unknown
-            && (expected & crate::syscall::seccomp::FILTER_SYSEXIT) != 0
-        {
-            if (flags & crate::syscall::seccomp::FILTER_SYSEXIT) != 0 {
-                EventmsgState::Reliable.store();
-            } else {
-                EventmsgState::Lost.store();
-                crate::verbose!(
-                    Some(tracee),
-                    1,
-                    "this kernel loses ptrace event messages (PTRACE_GETEVENTMSG reads 0), working around it"
-                );
-            }
-        }
-        if EventmsgState::load() != EventmsgState::Reliable {
-            flags |= expected;
-        }
+    // The flags our filter attached to this stop (C reads them with
+    // PTRACE_GETEVENTMSG) are a function of the syscall: look them up in
+    // the filter's own table instead, which costs no syscall, and keep the
+    // registers fetched for that to translate the syscall.  This is also
+    // right on kernels that lose event messages, and when a tracee's own
+    // RET_TRACE filter overrides the message.
+    if fetch_regs(tracee) < 0 {
+        return signal;
     }
+    let flags = crate::syscall::seccomp::filtered_sysnum_flags(
+        tracee,
+        get_sysnum(tracee, RegVersion::Current),
+    );
 
     if (flags & crate::syscall::seccomp::FILTER_SYSEXIT) != 0 || sysexit_necessary {
         if SECCOMP_AFTER_PTRACE_ENTER.load(Ordering::Relaxed) {
             tracee.restart_how = crate::ptrace::ptc::PTRACE_SYSCALL;
-            crate::syscall::translate_syscall(tracee);
+            crate::syscall::translate_syscall_fetched(tracee);
         }
         tracee.restart_how = crate::ptrace::ptc::PTRACE_SYSCALL;
         return signal;
@@ -684,7 +646,7 @@ fn handle_seccomp_stop(tracee: &mut Tracee, sysexit_necessary: bool) -> i32 {
 
     // Handle the sysenter stage right now.
     tracee.restart_how = crate::ptrace::ptc::PTRACE_CONT;
-    crate::syscall::translate_syscall(tracee);
+    crate::syscall::translate_syscall_fetched(tracee);
 
     if tracee.sysexit_pending {
         tracee.restart_how = crate::ptrace::ptc::PTRACE_SYSCALL;

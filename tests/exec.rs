@@ -76,6 +76,32 @@ fn nested_exec_under_proot_works() {
 }
 
 #[test]
+fn executable_pipe_preserves_script_body() {
+    if !have("python3") {
+        return;
+    }
+    let script = r#"
+import os, subprocess, sys
+r, w = os.pipe()
+os.fchmod(r, 0o700)
+os.write(w, b'#!/bin/sh\necho script-body\n')
+os.close(w)
+try:
+    result = subprocess.run([sys.argv[1], '/bin/sh', '-c', 'exec /proc/self/fd/0'],
+                            stdin=r, capture_output=True, timeout=30)
+finally:
+    os.close(r)
+assert result.returncode == 0, result.stderr
+assert result.stdout == b'script-body\n', result.stdout
+"#;
+    let out = std::process::Command::new("python3")
+        .args(["-c", script, PROOT])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+}
+
+#[test]
 fn empty_argv0_is_rejected() {
     let out = run(&[""], &[]);
     assert!(!out.status.success());
