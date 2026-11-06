@@ -55,7 +55,7 @@ test counts change as upstream adds coverage. Compare failures with the
 baseline and distinguish intentional differences from accidental bugs.
 Reference-suite parity is not a release gate; the Rust tests and the
 quality gates below must pass. Current compatibility gaps and benchmark
-results are recorded in [the performance report](docs/src/performance.md).
+results are recorded in [the performance report](docs/src/content/docs/performance.md).
 
 ## Code quality gates
 

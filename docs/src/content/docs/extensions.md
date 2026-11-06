@@ -1,4 +1,7 @@
-# Extension framework
+---
+title: Extension framework
+description: The extension interface, the built-in extensions, and how to add one.
+---
 
 Extensions are BoxKernel's mechanism for *policy on top of
 translation*. Everything the C code did with

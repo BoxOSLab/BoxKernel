@@ -1,4 +1,7 @@
-# Performance
+---
+title: Performance
+description: What the tracer skips, how to benchmark it, and the measured results.
+---
 
 ## Reducing tracer overhead
 

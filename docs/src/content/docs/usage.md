@@ -1,4 +1,7 @@
-# Usage and recipes
+---
+title: Usage and recipes
+description: "Common BoxKernel command lines: chroot, binds, fake root, QEMU, and the surprises."
+---
 
 `proot` [*option*] … [*command*]
 

@@ -1,4 +1,7 @@
-# Development guide
+---
+title: Development guide
+description: Toolchain, quality gates, the unsafe policy, and where the code lives.
+---
 
 ## Toolchain
 
@@ -32,6 +35,10 @@ $ cargo doc --no-deps --document-private-items
 `Cargo.toml [lints]`: `unsafe_op_in_unsafe_fn = "deny"` +
 `clippy::all` warn (CI: `-D warnings`). `deny.toml`: license
 allow-list, advisory DB, banned sources.
+
+The documentation site in `docs/` builds with Node.js 22 (`npm ci`, then
+`npm run build`). Its changelog page is generated from the repository
+`CHANGELOG.md`.
 
 ## Behavior and performance changes
 
@@ -79,7 +86,7 @@ src/
 loader/             no_std execve-completion stub
 data/               sysnums-*.txt tables
 tests/              end-to-end Rust integration tests
-docs/               this book
+docs/               documentation site (Astro Starlight)
 doc/proot.1         man page
 ```
 

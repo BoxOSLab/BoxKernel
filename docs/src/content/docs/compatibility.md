@@ -1,4 +1,7 @@
-# Compatibility with C PRoot
+---
+title: Compatibility with C PRoot
+description: Intentional differences from C PRoot and how to report a regression.
+---
 
 BoxKernel implements user-space rootfs translation, virtual bind mounts,
 fake identity and related PRoot features. The binary remains named

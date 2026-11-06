@@ -1,5 +1,8 @@
 /target
 **/*.rs.bk
 
-# mdBook output
-/docs/book
+# documentation site
+/docs/node_modules
+/docs/dist
+/docs/.astro
+/docs/src/content/docs/changelog.md

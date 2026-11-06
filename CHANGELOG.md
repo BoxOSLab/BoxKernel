@@ -32,15 +32,15 @@ re-implements ([Termux PRoot 5.1.0](https://github.com/termux/proot)).
   `lstat()` reaches the kernel on arm64 and with current C libraries.
 - Complete open-source documentation system:
   - `README.md` with feature overview, quick start, and badges
-  - mdBook documentation site under `docs/` (user guide, CLI reference,
+  - Astro Starlight documentation site under `docs/` (user guide, CLI reference,
     architecture, extensions, mixed-mode/QEMU, security model,
     development and testing guides)
   - `doc/proot.1` manual page
   - `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`,
     `CHANGELOG.md`
   - GitHub issue templates and pull-request template
-  - `docs` CI workflow: `cargo doc` plus mdBook build and GitHub Pages
-    deployment
+  - `docs` CI workflow: `cargo doc` plus the Starlight site build and
+    GitHub Pages deployment
 
 ### Changed
 

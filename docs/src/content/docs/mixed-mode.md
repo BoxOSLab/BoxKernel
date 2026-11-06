@@ -1,4 +1,7 @@
-# Mixed mode & QEMU user-mode
+---
+title: Mixed mode and QEMU
+description: Run a foreign-architecture rootfs with QEMU user-mode.
+---
 
 ## Foreign-architecture rootfs
 

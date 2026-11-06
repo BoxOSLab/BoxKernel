@@ -1,4 +1,7 @@
-# Manual page
+---
+title: Manual page
+description: Where the proot(1) manual page lives and how to install it.
+---
 
 The `proot(1)` manual page is maintained at
 [`doc/proot.1`](https://github.com/BoxOSLab/BoxKernel/blob/main/doc/proot.1)

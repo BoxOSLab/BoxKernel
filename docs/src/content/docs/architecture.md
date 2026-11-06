@@ -1,4 +1,7 @@
-# Architecture
+---
+title: Architecture
+description: How the ptrace engine, path translation, and extensions fit together.
+---
 
 BoxKernel is ~22,000 lines of Rust in one crate (`boxkernel`) producing
 a `proot` binary, plus a freestanding `loader/` sub-crate injected into

@@ -1,4 +1,7 @@
-# Command-line reference
+---
+title: Command-line reference
+description: Every proot option, its arguments, and its side effects.
+---
 
 The command line is two parts: `proot` options, then the command to
 launch (`/bin/sh` when none is given). This page documents the options
@@ -146,4 +149,4 @@ message or run with `-v`.
 
 `--ashmem-memfd` (Android-Bionic-only `memfd_create` emulation via
 ashmem) is not implemented; see
-[Compatibility](compatibility.md#known-differences).
+[Compatibility](compatibility.md#other-differences-and-gaps).

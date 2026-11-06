@@ -1,4 +1,7 @@
-# Installation
+---
+title: Installation
+description: Build BoxKernel from source, install the binary and the manual page, and cross-compile.
+---
 
 ## From source (the only supported method today)
 

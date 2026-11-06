@@ -1,4 +1,7 @@
-# Testing
+---
+title: Testing
+description: Rust tests and the C reference suite.
+---
 
 ## Three layers
 

@@ -41,8 +41,8 @@ or instrument Linux processes through its extension mechanism.
 * **Performance defaults** — bounded directory caching, native ELF
   loading, untraced stat calls in identity namespaces, and lazy
   descriptor tracking reduce tracer work. See
-  [measurements](docs/src/performance.md) and
-  [behavior controls](docs/src/compatibility.md).
+  [measurements](docs/src/content/docs/performance.md) and
+  [behavior controls](docs/src/content/docs/compatibility.md).
 * **ptrace instrumentation engine** — extensions subscribe to typed
   events (path translation, syscall enter/exit, inheritance, signals)
   through a single modular dispatcher.
@@ -53,7 +53,7 @@ The C reference implementation is battle-tested but carries decades of
 manual memory management, global state, and unchecked pointers. This
 rewrite develops these features with Rust's guarantees and measured
 performance improvements. Intentional behavior changes are documented
-in the [compatibility guide](docs/src/compatibility.md).
+in the [compatibility guide](docs/src/content/docs/compatibility.md).
 
 * All `libc`/kernel-boundary `unsafe` is isolated in one auditable
   module ([`src/sys.rs`](src/sys.rs)); no `static mut`, no `transmute`,
@@ -92,17 +92,17 @@ guaranteed.
 
 | Document | Contents |
 |---|---|
-| [User guide](docs/src/usage.md) | Recipes: chroot, binds, `-R`/`-S`, fake root |
-| [Command-line reference](docs/src/options.md) | Every option, argument, and side effect |
-| [Architecture](docs/src/architecture.md) | How the ptrace engine, translation pipeline, and modules fit together |
-| [Extensions](docs/src/extensions.md) | What each built-in extension does and how to write one |
-| [Mixed mode & QEMU](docs/src/mixed-mode.md) | Foreign-architecture and host/guest mixed execution |
-| [Security model](docs/src/security.md) | What BoxKernel does *not* protect you from |
-| [Development](docs/src/development.md) | Toolchain, lint/test commands, unsafe policy, behavior changes |
-| [Testing](docs/src/testing.md) | Unit tests and the C-reference integration suite |
+| [User guide](docs/src/content/docs/usage.md) | Recipes: chroot, binds, `-R`/`-S`, fake root |
+| [Command-line reference](docs/src/content/docs/options.md) | Every option, argument, and side effect |
+| [Architecture](docs/src/content/docs/architecture.md) | How the ptrace engine, translation pipeline, and modules fit together |
+| [Extensions](docs/src/content/docs/extensions.md) | What each built-in extension does and how to write one |
+| [Mixed mode & QEMU](docs/src/content/docs/mixed-mode.md) | Foreign-architecture and host/guest mixed execution |
+| [Security model](docs/src/content/docs/security.md) | What BoxKernel does *not* protect you from |
+| [Development](docs/src/content/docs/development.md) | Toolchain, lint/test commands, unsafe policy, behavior changes |
+| [Testing](docs/src/content/docs/testing.md) | Unit tests and the C-reference integration suite |
 | `man proot` ([doc/proot.1](doc/proot.1)) | The manual page |
 
-The rendered book is published to GitHub Pages by the
+The rendered site is published to GitHub Pages by the
 [docs workflow](.github/workflows/docs.yml).
 
 ## Building
@@ -118,7 +118,7 @@ $ cargo fmt --check && cargo clippy --all-targets -- -D warnings
 $ cargo deny check              # license/advisory audit
 ```
 
-See [Development](docs/src/development.md) for the full workflow,
+See [Development](docs/src/content/docs/development.md) for the full workflow,
 including running the upstream C integration suite against the Rust
 binary.
 

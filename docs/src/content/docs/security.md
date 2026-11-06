@@ -1,4 +1,7 @@
-# Security model
+---
+title: Security model
+description: What BoxKernel does not confine, and how its unsafe code is bounded.
+---
 
 ## BoxKernel is not a sandbox
 

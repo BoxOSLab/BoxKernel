@@ -1,4 +1,9 @@
-# Introduction
+---
+title: Introduction
+description: User-space chroot, bind mounts, and binfmt_misc. A clean-room Rust rewrite of PRoot.
+---
+
+<p class="syscall">ptrace(PTRACE_SYSCALL, tracee, 0, 0) <span class="ret">= 0</span></p>
 
 **BoxKernel** is a clean-room Rust re-implementation of
 [Termux PRoot 5.1.0](https://github.com/termux/proot) — a user-space
@@ -57,7 +62,7 @@ See [Compatibility](compatibility.md) for intentional behavior changes.
   mountinfo rewriting
 - Seccomp-accelerated filtering; `--kill-on-exit`; verbose levels `-v`
 
-## Reading this book
+## Where to start
 
 - **Using it?** Start with [Installation](installation.md) then
   [Usage and recipes](usage.md); keep the
